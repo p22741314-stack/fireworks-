@@ -2,6 +2,7 @@ import json
 import os
 import random
 import threading
+import time
 
 import discord
 from discord.ext import commands
@@ -13,6 +14,10 @@ from flask import Flask
 DATA_FILE = "keys.json"
 PREFIX = "."
 ALLOWED_CHANNEL_ID = 1540428805104074793
+
+# Non-admins must wait this many seconds between claims.
+# Admins are exempt.
+KEY_COOLDOWN_SECONDS = 30
 
 
 # ---------- Render Web Server ----------
@@ -50,6 +55,12 @@ def load_keys():
 def save_keys(keys):
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(keys, f, indent=2)
+
+
+# ---------- Cooldown Tracking (in-memory) ----------
+
+# user_id -> timestamp of last successful claim (unix seconds)
+_last_claim = {}
 
 
 # ---------- Bot Setup ----------
@@ -259,7 +270,26 @@ async def key(ctx):
     Claim a random key.
 
     The key is removed from stock and sent through DM.
+    Non-admins are limited by a cooldown; admins are not.
     """
+
+    # --- Cooldown check (admins bypass) ---
+
+    if not ctx.author.guild_permissions.administrator:
+
+        now = time.time()
+
+        last = _last_claim.get(ctx.author.id, 0)
+
+        remaining = KEY_COOLDOWN_SECONDS - (now - last)
+
+        if remaining > 0:
+
+            await ctx.send(
+                f"{ctx.author.mention} wait **{int(remaining)}s** "
+                "before claiming another key."
+            )
+            return
 
     keys = load_keys()
 
@@ -285,6 +315,9 @@ async def key(ctx):
             f"{ctx.author.mention} check your DMs! "
             "Your key has been sent."
         )
+
+        # Only start the cooldown after a successful claim
+        _last_claim[ctx.author.id] = time.time()
 
     except discord.Forbidden:
 
