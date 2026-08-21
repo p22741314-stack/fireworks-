@@ -1,10 +1,10 @@
 """
 Key Vault Discord Bot
 ----------------------
-Give out keys from a "storage" like a vending machine:
-- Admins restock keys for a product
-- Anyone can claim a key with !getkey (it's removed from storage, sent via DM)
-- Anyone can view current stock with !stock
+Give out keys from a single storage pool:
+- Admins restock by attaching a .txt file (one key per line)
+- Anyone can claim a key with .getkey (removed from storage, sent via DM)
+- Anyone can view current stock with .stock
 
 Storage is a simple JSON file (keys.json) so it persists across restarts.
 No external database needed.
@@ -23,19 +23,19 @@ import discord
 from discord.ext import commands
 
 DATA_FILE = "keys.json"
-PREFIX = "!"
+PREFIX = "."
 
 # ---------- Storage helpers ----------
 
-def load_data():
+def load_keys():
     if not os.path.exists(DATA_FILE):
-        return {}
+        return []
     with open(DATA_FILE, "r") as f:
         return json.load(f)
 
-def save_data(data):
+def save_keys(keys):
     with open(DATA_FILE, "w") as f:
-        json.dump(data, f, indent=2)
+        json.dump(keys, f, indent=2)
 
 # ---------- Bot setup ----------
 
@@ -46,7 +46,7 @@ bot = commands.Bot(command_prefix=PREFIX, intents=intents)
 
 
 def is_admin():
-    """Restrict a command to users with Manage Server / Administrator permission."""
+    """Restrict a command to users with Administrator permission."""
     async def predicate(ctx):
         return ctx.author.guild_permissions.administrator
     return commands.check(predicate)
@@ -61,25 +61,25 @@ async def on_ready():
 
 @bot.command(name="restock")
 @is_admin()
-async def restock(ctx, product: str):
+async def restock(ctx):
     """
-    Add keys to a product's stock by attaching a .txt file (one key per line).
-    Usage: !restock <product>   (with a .txt file attached to the message)
+    Add keys to the vault by attaching a .txt file (one key per line).
+    Usage: .restock   (with a .txt file attached to the message)
     """
     if not ctx.message.attachments:
-        await ctx.send("📎 Attach a .txt file with the message — one key per line.")
+        await ctx.send("Attach a .txt file with the message, one key per line.")
         return
 
     attachment = ctx.message.attachments[0]
     if not attachment.filename.lower().endswith(".txt"):
-        await ctx.send("❌ Please attach a plain .txt file.")
+        await ctx.send("Please attach a plain .txt file.")
         return
 
     raw_bytes = await attachment.read()
     try:
         raw_text = raw_bytes.decode("utf-8")
     except UnicodeDecodeError:
-        await ctx.send("❌ Couldn't read that file — make sure it's plain UTF-8 text.")
+        await ctx.send("Couldn't read that file, make sure it's plain UTF-8 text.")
         return
 
     new_keys = [line.strip() for line in raw_text.splitlines() if line.strip()]
@@ -87,79 +87,57 @@ async def restock(ctx, product: str):
         await ctx.send("That file didn't have any keys in it (one per line).")
         return
 
-    data = load_data()
-    product_key = product.lower()
-    data.setdefault(product_key, [])
-    data[product_key].extend(new_keys)
-    save_data(data)
+    keys = load_keys()
+    keys.extend(new_keys)
+    save_keys(keys)
 
-    await ctx.send(f"✅ Added **{len(new_keys)}** key(s) to **{product}** from `{attachment.filename}`. "
-                    f"Total in stock: **{len(data[product_key])}**.")
+    await ctx.send(f"Added {len(new_keys)} key(s) from {attachment.filename}. "
+                    f"Total in stock: {len(keys)}.")
 
 
 @bot.command(name="stock")
-async def stock(ctx, product: str = None):
+async def stock(ctx):
     """
-    View stock counts.
-    Usage: !stock            -> shows all products and counts
-           !stock <product>  -> shows count for one product
+    View how many keys are currently in stock.
+    Usage: .stock
     """
-    data = load_data()
-
-    if not data:
-        await ctx.send("The vault is empty. No products have been stocked yet.")
-        return
-
-    if product:
-        product_key = product.lower()
-        count = len(data.get(product_key, []))
-        await ctx.send(f"📦 **{product}**: {count} key(s) in stock.")
-        return
-
-    lines = [f"**{name}** — {len(keys)} key(s)" for name, keys in data.items()]
-    embed = discord.Embed(
-        title="🔑 Key Vault Stock",
-        description="\n".join(lines),
-        color=discord.Color.blurple()
-    )
-    await ctx.send(embed=embed)
+    keys = load_keys()
+    await ctx.send(f"Stock: {len(keys)} key(s) remaining.")
 
 
 @bot.command(name="getkey")
-async def getkey(ctx, product: str):
+async def getkey(ctx):
     """
-    Claim a key for a product. The key is removed from storage and DMed to you.
-    Usage: !getkey <product>
+    Claim a key. It is removed from storage and DMed to you.
+    Usage: .getkey
     """
-    data = load_data()
-    product_key = product.lower()
+    keys = load_keys()
 
-    if product_key not in data or not data[product_key]:
-        await ctx.send(f"❌ Sorry, **{product}** is out of stock.")
+    if not keys:
+        await ctx.send("Sorry, out of stock.")
         return
 
-    key = data[product_key].pop(0)  # take the first available key
-    save_data(data)
+    key = keys.pop(0)  # take the first available key
+    save_keys(keys)
 
     try:
-        await ctx.author.send(f"🔑 Here is your key for **{product}**:\n```{key}```")
-        await ctx.send(f"{ctx.author.mention} ✅ Check your DMs — your key has been sent!")
+        await ctx.author.send(f"Here is your key:\n```{key}```")
+        await ctx.send(f"{ctx.author.mention} Check your DMs, your key has been sent.")
     except discord.Forbidden:
         # If DMs are closed, put the key back so it isn't lost
-        data = load_data()
-        data.setdefault(product_key, [])
-        data[product_key].insert(0, key)
-        save_data(data)
-        await ctx.send(f"{ctx.author.mention} ❌ I couldn't DM you (check your privacy settings). "
-                        f"Your key was NOT taken from stock — try again after enabling DMs.")
+        keys = load_keys()
+        keys.insert(0, key)
+        save_keys(keys)
+        await ctx.send(f"{ctx.author.mention} I couldn't DM you (check your privacy settings). "
+                        f"Your key was not taken from stock, try again after enabling DMs.")
 
 
 @restock.error
 async def admin_error(ctx, error):
     if isinstance(error, commands.CheckFailure):
-        await ctx.send("🚫 You need Administrator permission to do that.")
+        await ctx.send("You need Administrator permission to do that.")
     else:
-        await ctx.send(f"⚠️ Error: {error}")
+        await ctx.send(f"Error: {error}")
 
 
 # ---------- Run ----------
