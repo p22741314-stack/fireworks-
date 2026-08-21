@@ -6,6 +6,7 @@ Give out keys from a single storage pool:
 - Anyone can claim a key with .key (removed from storage, sent via DM)
 - Anyone can view current stock count with .stock
 - Admins can view every key in stock with .view
+- Admins can wipe all stock with .clear
 
 Storage is a simple JSON file (keys.json) so it persists across restarts.
 No external database needed.
@@ -131,6 +132,17 @@ async def view(ctx):
         await ctx.send(f"{len(keys)} keys in stock:\n```{listing}```")
 
 
+@bot.command(name="clear")
+@is_admin()
+async def clear(ctx):
+    """
+    Wipe all keys from the vault (admin only).
+    Usage: .clear
+    """
+    save_keys([])
+    await ctx.send("Stock has been cleared.")
+
+
 @bot.command(name="stock")
 async def stock(ctx):
     """
@@ -158,7 +170,7 @@ async def key(ctx):
     save_keys(keys)
 
     try:
-        await ctx.author.send(f"Here is your key:\n`{picked_key}`")
+        await ctx.author.send(f"`{picked_key}`")
         await ctx.send(f"{ctx.author.mention} Check your DMs, your key has been sent.")
     except discord.Forbidden:
         # If DMs are closed, put the key back so it isn't lost
@@ -171,6 +183,7 @@ async def key(ctx):
 
 @restock.error
 @view.error
+@clear.error
 async def admin_error(ctx, error):
     if isinstance(error, commands.CheckFailure):
         await ctx.send("You need Administrator permission to do that.")
