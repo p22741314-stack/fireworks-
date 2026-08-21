@@ -12,12 +12,16 @@ from flask import Flask
 # ---------- Configuration ----------
 
 DATA_FILE = "keys.json"
+BLACKLIST_FILE = "blacklist.json"
 PREFIX = "."
 ALLOWED_CHANNEL_ID = 1540428805104074793
 
 # Non-admins must wait this many seconds between claims.
 # Admins are exempt.
 KEY_COOLDOWN_SECONDS = 30
+
+# Number of spam attempts while on cooldown before auto-blacklist.
+SPAM_LIMIT = 2
 
 
 # ---------- Render Web Server ----------
@@ -57,10 +61,35 @@ def save_keys(keys):
         json.dump(keys, f, indent=2)
 
 
-# ---------- Cooldown Tracking (in-memory) ----------
+# ---------- Blacklist Helpers ----------
+
+def load_blacklist():
+    if not os.path.exists(BLACKLIST_FILE):
+        return set()
+
+    try:
+        with open(BLACKLIST_FILE, "r", encoding="utf-8") as f:
+            return set(json.load(f))
+    except (json.JSONDecodeError, OSError):
+        return set()
+
+
+def save_blacklist(blacklisted_ids):
+    with open(BLACKLIST_FILE, "w", encoding="utf-8") as f:
+        json.dump(sorted(blacklisted_ids), f, indent=2)
+
+
+def is_blacklisted(user_id):
+    return user_id in load_blacklist()
+
+
+# ---------- Cooldown / Spam Tracking (in-memory) ----------
 
 # user_id -> timestamp of last successful claim (unix seconds)
 _last_claim = {}
+
+# user_id -> number of spam attempts while on cooldown
+_spam_count = {}
 
 
 # ---------- Bot Setup ----------
@@ -231,6 +260,36 @@ async def view(ctx):
         )
 
 
+# ---------- UNBLACKLIST ----------
+
+@bot.command(name="unblacklist")
+@is_admin()
+async def unblacklist(ctx, user_id: int):
+    """
+    Remove a user from the blacklist.
+
+    Admin only.
+
+    Usage:
+    .unblacklist <user_id>
+    """
+
+    blacklisted = load_blacklist()
+
+    if user_id not in blacklisted:
+        await ctx.send(f"User `{user_id}` is not blacklisted.")
+        return
+
+    blacklisted.discard(user_id)
+
+    save_blacklist(blacklisted)
+
+    # Reset their spam counter too
+    _spam_count.pop(user_id, None)
+
+    await ctx.send(f"User `{user_id}` has been unblacklisted.")
+
+
 # ---------- CLEAR ----------
 
 @bot.command(name="clear")
@@ -270,24 +329,56 @@ async def key(ctx):
     Claim a random key.
 
     The key is removed from stock and sent through DM.
-    Non-admins are limited by a cooldown; admins are not.
+    Non-admins are limited by a cooldown; spamming gets you
+    auto-blacklisted. Admins are exempt from all of this.
     """
 
-    # --- Cooldown check (admins bypass) ---
+    user_id = ctx.author.id
+    is_admin_user = ctx.author.guild_permissions.administrator
 
-    if not ctx.author.guild_permissions.administrator:
+    # --- Blacklist check ---
 
+    if is_blacklisted(user_id):
+        await ctx.send(
+            f"{ctx.author.mention} you are blacklisted and cannot "
+            "use this command."
+        )
+        return
+
+    # --- Admin exemption ---
+
+    if is_admin_user:
+        pass  # admins skip cooldown and spam checks
+
+    else:
         now = time.time()
-
-        last = _last_claim.get(ctx.author.id, 0)
-
+        last = _last_claim.get(user_id, 0)
         remaining = KEY_COOLDOWN_SECONDS - (now - last)
 
         if remaining > 0:
+            # Spamming while on cooldown
+            _spam_count[user_id] = _spam_count.get(user_id, 0) + 1
+
+            attempts = _spam_count[user_id]
+
+            if attempts >= SPAM_LIMIT:
+                blacklisted = load_blacklist()
+                blacklisted.add(user_id)
+                save_blacklist(blacklisted)
+
+                _spam_count.pop(user_id, None)
+
+                await ctx.send(
+                    f"{ctx.author.mention} you have been "
+                    "**blacklisted** for spamming. Contact an admin "
+                    "to get unblacklisted."
+                )
+                return
 
             await ctx.send(
                 f"{ctx.author.mention} wait **{int(remaining)}s** "
-                "before claiming another key."
+                "before claiming another key. "
+                f"(spam warning {attempts}/{SPAM_LIMIT})"
             )
             return
 
@@ -317,7 +408,8 @@ async def key(ctx):
         )
 
         # Only start the cooldown after a successful claim
-        _last_claim[ctx.author.id] = time.time()
+        _last_claim[user_id] = time.time()
+        _spam_count.pop(user_id, None)
 
     except discord.Forbidden:
 
@@ -340,12 +432,20 @@ async def key(ctx):
 @restock.error
 @view.error
 @clear.error
+@unblacklist.error
 async def admin_error(ctx, error):
 
     if isinstance(error, commands.CheckFailure):
 
         await ctx.send(
             " You need Administrator permission to do that."
+        )
+
+    elif isinstance(error, commands.BadArgument):
+
+        await ctx.send(
+            f" Invalid usage: `{error.argument}`. "
+            "Provide the user's ID."
         )
 
     else:
