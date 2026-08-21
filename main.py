@@ -12,7 +12,7 @@ from flask import Flask
 
 DATA_FILE = "keys.json"
 PREFIX = "."
-ALLOWED_CHANNEL_ID = 1539288424622850130
+ALLOWED_CHANNEL_ID = 1540428805104074793
 
 
 # ---------- Render Web Server ----------
