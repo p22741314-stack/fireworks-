@@ -158,7 +158,7 @@ async def key(ctx):
     save_keys(keys)
 
     try:
-        await ctx.author.send(f"Here is your key:\n```{picked_key}```")
+        await ctx.author.send(f"Here is your key:\n`{picked_key}`")
         await ctx.send(f"{ctx.author.mention} Check your DMs, your key has been sent.")
     except discord.Forbidden:
         # If DMs are closed, put the key back so it isn't lost
