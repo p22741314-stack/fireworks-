@@ -3,7 +3,7 @@ Key Vault Discord Bot
 ----------------------
 Give out keys from a single storage pool:
 - Admins restock by attaching a .txt file (one key per line)
-- Anyone can claim a key with .getkey (removed from storage, sent via DM)
+- Anyone can claim a key with .key (removed from storage, sent via DM)
 - Anyone can view current stock with .stock
 
 Storage is a simple JSON file (keys.json) so it persists across restarts.
@@ -57,6 +57,15 @@ async def on_ready():
     print(f"Logged in as {bot.user} (id: {bot.user.id})")
 
 
+@bot.check
+async def block_dms(ctx):
+    """Global check: commands only work inside a server, not in DMs to the bot."""
+    if ctx.guild is None:
+        await ctx.send("Commands can't be used in DMs, use them in the server.")
+        return False
+    return True
+
+
 # ---------- Commands ----------
 
 @bot.command(name="restock")
@@ -105,11 +114,11 @@ async def stock(ctx):
     await ctx.send(f"Stock: {len(keys)} keys remaining.")
 
 
-@bot.command(name="getkey")
-async def getkey(ctx):
+@bot.command(name="key")
+async def key(ctx):
     """
     Claim a key. It is removed from storage and DMed to you.
-    Usage: .getkey
+    Usage: .key
     """
     keys = load_keys()
 
@@ -117,16 +126,16 @@ async def getkey(ctx):
         await ctx.send("Sorry, out of stock.")
         return
 
-    key = keys.pop(0)  # take the first available key
+    picked_key = keys.pop(0)  # take the first available key
     save_keys(keys)
 
     try:
-        await ctx.author.send(f"Here is your key:\n```{key}```")
+        await ctx.author.send(f"Here is your key:\n```{picked_key}```")
         await ctx.send(f"{ctx.author.mention} Check your DMs, your key has been sent.")
     except discord.Forbidden:
         # If DMs are closed, put the key back so it isn't lost
         keys = load_keys()
-        keys.insert(0, key)
+        keys.insert(0, picked_key)
         save_keys(keys)
         await ctx.send(f"{ctx.author.mention} I couldn't DM you (check your privacy settings). "
                         f"Your key was not taken from stock, try again after enabling DMs.")
