@@ -1,16 +1,3 @@
-"""
-Key Vault Discord Bot
-----------------------
-Commands:
-- .restock  -> Admins attach a .txt file with keys
-- .key      -> User claims a random key
-- .stock    -> Shows current stock
-- .view     -> Admins view all keys
-- .clear    -> Admins clear all keys
-
-Render Web Service compatible.
-"""
-
 import json
 import os
 import random
@@ -291,7 +278,7 @@ async def key(ctx):
     try:
 
         await ctx.author.send(
-            f"🎟️ Your key:\n`{picked_key}`"
+            f" Your key:\n`{picked_key}`"
         )
 
         await ctx.send(
@@ -325,13 +312,13 @@ async def admin_error(ctx, error):
     if isinstance(error, commands.CheckFailure):
 
         await ctx.send(
-            "❌ You need Administrator permission to do that."
+            " You need Administrator permission to do that."
         )
 
     else:
 
         await ctx.send(
-            f"❌ Error: {error}"
+            f" Error: {error}"
         )
 
 
