@@ -1,6 +1,6 @@
 services:
   - type: web
-    name: discord-bot
+    name: fireworks
     env: python
     buildCommand: pip install -r requirements.txt
     startCommand: python main.py
