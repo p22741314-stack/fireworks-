@@ -91,7 +91,7 @@ async def restock(ctx):
     keys.extend(new_keys)
     save_keys(keys)
 
-    await ctx.send(f"Added {len(new_keys)} key(s) from {attachment.filename}. "
+    await ctx.send(f"Added {len(new_keys)} keys from {attachment.filename}. "
                     f"Total in stock: {len(keys)}.")
 
 
@@ -102,7 +102,7 @@ async def stock(ctx):
     Usage: .stock
     """
     keys = load_keys()
-    await ctx.send(f"Stock: {len(keys)} key(s) remaining.")
+    await ctx.send(f"Stock: {len(keys)} keys remaining.")
 
 
 @bot.command(name="getkey")
