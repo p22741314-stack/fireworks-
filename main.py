@@ -120,16 +120,16 @@ async def view(ctx):
         await ctx.send("The vault is empty.")
         return
 
-    listing = "\n".join(keys)
+    listing = "\n".join(f"`{k}`" for k in keys)
     # Discord messages cap at 2000 chars, send as a file if it's too long
     if len(listing) > 1900:
         with open("stock_view.txt", "w") as f:
-            f.write(listing)
+            f.write("\n".join(keys))
         await ctx.send(f"{len(keys)} keys in stock, sending as a file:",
                         file=discord.File("stock_view.txt"))
         os.remove("stock_view.txt")
     else:
-        await ctx.send(f"{len(keys)} keys in stock:\n```{listing}```")
+        await ctx.send(f"{len(keys)} keys in stock:\n{listing}")
 
 
 @bot.command(name="clear")
