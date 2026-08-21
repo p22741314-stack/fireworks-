@@ -61,15 +61,30 @@ async def on_ready():
 
 @bot.command(name="restock")
 @is_admin()
-async def restock(ctx, product: str, *, keys_text: str):
+async def restock(ctx, product: str):
     """
-    Add one or more keys to a product's stock.
-    Usage: !restock <product> <key1> <key2> <key3> ...
-    Keys can be space or newline separated.
+    Add keys to a product's stock by attaching a .txt file (one key per line).
+    Usage: !restock <product>   (with a .txt file attached to the message)
     """
-    new_keys = [k.strip() for k in keys_text.split() if k.strip()]
+    if not ctx.message.attachments:
+        await ctx.send("📎 Attach a .txt file with the message — one key per line.")
+        return
+
+    attachment = ctx.message.attachments[0]
+    if not attachment.filename.lower().endswith(".txt"):
+        await ctx.send("❌ Please attach a plain .txt file.")
+        return
+
+    raw_bytes = await attachment.read()
+    try:
+        raw_text = raw_bytes.decode("utf-8")
+    except UnicodeDecodeError:
+        await ctx.send("❌ Couldn't read that file — make sure it's plain UTF-8 text.")
+        return
+
+    new_keys = [line.strip() for line in raw_text.splitlines() if line.strip()]
     if not new_keys:
-        await ctx.send("You need to include at least one key.")
+        await ctx.send("That file didn't have any keys in it (one per line).")
         return
 
     data = load_data()
@@ -78,7 +93,7 @@ async def restock(ctx, product: str, *, keys_text: str):
     data[product_key].extend(new_keys)
     save_data(data)
 
-    await ctx.send(f"✅ Added **{len(new_keys)}** key(s) to **{product}**. "
+    await ctx.send(f"✅ Added **{len(new_keys)}** key(s) to **{product}** from `{attachment.filename}`. "
                     f"Total in stock: **{len(data[product_key])}**.")
 
 
@@ -139,22 +154,7 @@ async def getkey(ctx, product: str):
                         f"Your key was NOT taken from stock — try again after enabling DMs.")
 
 
-@bot.command(name="removeproduct")
-@is_admin()
-async def removeproduct(ctx, product: str):
-    """Delete a product entirely from the vault (admin only)."""
-    data = load_data()
-    product_key = product.lower()
-    if product_key in data:
-        del data[product_key]
-        save_data(data)
-        await ctx.send(f"🗑️ Removed product **{product}** from the vault.")
-    else:
-        await ctx.send(f"No such product: **{product}**.")
-
-
 @restock.error
-@removeproduct.error
 async def admin_error(ctx, error):
     if isinstance(error, commands.CheckFailure):
         await ctx.send("🚫 You need Administrator permission to do that.")
