@@ -4,7 +4,8 @@ Key Vault Discord Bot
 Give out keys from a single storage pool:
 - Admins restock by attaching a .txt file (one key per line)
 - Anyone can claim a key with .key (removed from storage, sent via DM)
-- Anyone can view current stock with .stock
+- Anyone can view current stock count with .stock
+- Admins can view every key in stock with .view
 
 Storage is a simple JSON file (keys.json) so it persists across restarts.
 No external database needed.
@@ -19,6 +20,7 @@ Setup:
 
 import json
 import os
+import random
 import discord
 from discord.ext import commands
 
@@ -104,6 +106,31 @@ async def restock(ctx):
                     f"Total in stock: {len(keys)}.")
 
 
+@bot.command(name="view")
+@is_admin()
+async def view(ctx):
+    """
+    View every key currently in stock (admin only).
+    Usage: .view
+    """
+    keys = load_keys()
+
+    if not keys:
+        await ctx.send("The vault is empty.")
+        return
+
+    listing = "\n".join(keys)
+    # Discord messages cap at 2000 chars, send as a file if it's too long
+    if len(listing) > 1900:
+        with open("stock_view.txt", "w") as f:
+            f.write(listing)
+        await ctx.send(f"{len(keys)} keys in stock, sending as a file:",
+                        file=discord.File("stock_view.txt"))
+        os.remove("stock_view.txt")
+    else:
+        await ctx.send(f"{len(keys)} keys in stock:\n```{listing}```")
+
+
 @bot.command(name="stock")
 async def stock(ctx):
     """
@@ -126,7 +153,8 @@ async def key(ctx):
         await ctx.send("Sorry, out of stock.")
         return
 
-    picked_key = keys.pop(0)  # take the first available key
+    index = random.randrange(len(keys))
+    picked_key = keys.pop(index)  # take a random available key
     save_keys(keys)
 
     try:
@@ -135,13 +163,14 @@ async def key(ctx):
     except discord.Forbidden:
         # If DMs are closed, put the key back so it isn't lost
         keys = load_keys()
-        keys.insert(0, picked_key)
+        keys.append(picked_key)
         save_keys(keys)
         await ctx.send(f"{ctx.author.mention} I couldn't DM you (check your privacy settings). "
                         f"Your key was not taken from stock, try again after enabling DMs.")
 
 
 @restock.error
+@view.error
 async def admin_error(ctx, error):
     if isinstance(error, commands.CheckFailure):
         await ctx.send("You need Administrator permission to do that.")
