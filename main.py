@@ -1,269 +1,179 @@
+"""
+Key Vault Discord Bot
+----------------------
+Give out keys from a "storage" like a vending machine:
+- Admins restock keys for a product
+- Anyone can claim a key with !getkey (it's removed from storage, sent via DM)
+- Anyone can view current stock with !stock
+
+Storage is a simple JSON file (keys.json) so it persists across restarts.
+No external database needed.
+
+Setup:
+1. pip install -r requirements.txt
+2. Create a bot at https://discord.com/developers/applications
+   - Enable "Message Content Intent" under Bot settings
+3. Put your bot token in a file called token.txt (or set DISCORD_TOKEN env var)
+4. Run: python bot.py
+"""
+
+import json
+import os
 import discord
 from discord.ext import commands
-import sqlite3
-import os
+
+DATA_FILE = "keys.json"
+PREFIX = "!"
+
+# ---------- Storage helpers ----------
+
+def load_data():
+    if not os.path.exists(DATA_FILE):
+        return {}
+    with open(DATA_FILE, "r") as f:
+        return json.load(f)
+
+def save_data(data):
+    with open(DATA_FILE, "w") as f:
+        json.dump(data, f, indent=2)
+
+# ---------- Bot setup ----------
 
 intents = discord.Intents.default()
 intents.message_content = True
 
-bot = commands.Bot(command_prefix="!", intents=intents)
-
-DB_FILE = "keys.db"
+bot = commands.Bot(command_prefix=PREFIX, intents=intents)
 
 
-# ---------------- DATABASE ----------------
+def is_admin():
+    """Restrict a command to users with Manage Server / Administrator permission."""
+    async def predicate(ctx):
+        return ctx.author.guild_permissions.administrator
+    return commands.check(predicate)
 
-def setup_database():
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS keys (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            key TEXT UNIQUE NOT NULL
-        )
-    """)
-
-    conn.commit()
-    conn.close()
-
-
-def add_keys(keys):
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-
-    added = 0
-
-    for key in keys:
-        try:
-            cursor.execute(
-                "INSERT INTO keys (key) VALUES (?)",
-                (key,)
-            )
-            added += 1
-        except sqlite3.IntegrityError:
-            pass
-
-    conn.commit()
-    conn.close()
-
-    return added
-
-
-def get_key():
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-
-    cursor.execute(
-        "SELECT id, key FROM keys ORDER BY id LIMIT 1"
-    )
-
-    result = cursor.fetchone()
-
-    if result is None:
-        conn.close()
-        return None
-
-    key_id, key = result
-
-    cursor.execute(
-        "DELETE FROM keys WHERE id = ?",
-        (key_id,)
-    )
-
-    conn.commit()
-    conn.close()
-
-    return key
-
-
-def get_stock():
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-
-    cursor.execute("SELECT COUNT(*) FROM keys")
-    count = cursor.fetchone()[0]
-
-    conn.close()
-
-    return count
-
-
-def get_all_keys():
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-
-    cursor.execute("SELECT key FROM keys ORDER BY id")
-    keys = [row[0] for row in cursor.fetchall()]
-
-    conn.close()
-
-    return keys
-
-
-def remove_key(key):
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-
-    cursor.execute(
-        "DELETE FROM keys WHERE key = ?",
-        (key,)
-    )
-
-    removed = cursor.rowcount
-
-    conn.commit()
-    conn.close()
-
-    return removed
-
-
-# ---------------- BOT ----------------
 
 @bot.event
 async def on_ready():
-    setup_database()
-    print(f"Logged in as {bot.user}")
-    print(f"Key stock: {get_stock()}")
+    print(f"Logged in as {bot.user} (id: {bot.user.id})")
 
 
-# ---------------- GET KEY ----------------
+# ---------- Commands ----------
 
-@bot.command()
-async def getkey(ctx):
-
-    key = get_key()
-
-    if key is None:
-        await ctx.send("❌ **Out of stock!**")
+@bot.command(name="restock")
+@is_admin()
+async def restock(ctx, product: str, *, keys_text: str):
+    """
+    Add one or more keys to a product's stock.
+    Usage: !restock <product> <key1> <key2> <key3> ...
+    Keys can be space or newline separated.
+    """
+    new_keys = [k.strip() for k in keys_text.split() if k.strip()]
+    if not new_keys:
+        await ctx.send("You need to include at least one key.")
         return
+
+    data = load_data()
+    product_key = product.lower()
+    data.setdefault(product_key, [])
+    data[product_key].extend(new_keys)
+    save_data(data)
+
+    await ctx.send(f"✅ Added **{len(new_keys)}** key(s) to **{product}**. "
+                    f"Total in stock: **{len(data[product_key])}**.")
+
+
+@bot.command(name="stock")
+async def stock(ctx, product: str = None):
+    """
+    View stock counts.
+    Usage: !stock            -> shows all products and counts
+           !stock <product>  -> shows count for one product
+    """
+    data = load_data()
+
+    if not data:
+        await ctx.send("The vault is empty. No products have been stocked yet.")
+        return
+
+    if product:
+        product_key = product.lower()
+        count = len(data.get(product_key, []))
+        await ctx.send(f"📦 **{product}**: {count} key(s) in stock.")
+        return
+
+    lines = [f"**{name}** — {len(keys)} key(s)" for name, keys in data.items()]
+    embed = discord.Embed(
+        title="🔑 Key Vault Stock",
+        description="\n".join(lines),
+        color=discord.Color.blurple()
+    )
+    await ctx.send(embed=embed)
+
+
+@bot.command(name="getkey")
+async def getkey(ctx, product: str):
+    """
+    Claim a key for a product. The key is removed from storage and DMed to you.
+    Usage: !getkey <product>
+    """
+    data = load_data()
+    product_key = product.lower()
+
+    if product_key not in data or not data[product_key]:
+        await ctx.send(f"❌ Sorry, **{product}** is out of stock.")
+        return
+
+    key = data[product_key].pop(0)  # take the first available key
+    save_data(data)
 
     try:
-        await ctx.author.send(
-            f"🎉 **Your Key**\n\n"
-            f"`{key}`\n\n"
-            f"🔑 Enjoy!"
-        )
-
-        await ctx.send(
-            f"✅ {ctx.author.mention}, your key was sent to your DMs!"
-        )
-
+        await ctx.author.send(f"🔑 Here is your key for **{product}**:\n```{key}```")
+        await ctx.send(f"{ctx.author.mention} ✅ Check your DMs — your key has been sent!")
     except discord.Forbidden:
-        await ctx.send(
-            f"❌ {ctx.author.mention}, I can't DM you. "
-            f"Please enable DMs and try again."
-        )
+        # If DMs are closed, put the key back so it isn't lost
+        data = load_data()
+        data.setdefault(product_key, [])
+        data[product_key].insert(0, key)
+        save_data(data)
+        await ctx.send(f"{ctx.author.mention} ❌ I couldn't DM you (check your privacy settings). "
+                        f"Your key was NOT taken from stock — try again after enabling DMs.")
 
 
-# ---------------- STOCK ----------------
-
-@bot.command()
-async def stock(ctx):
-
-    amount = get_stock()
-
-    await ctx.send(
-        f"📦 **Key Stock**\n\n"
-        f"🔑 Available: **{amount}**"
-    )
-
-
-# ---------------- RESTOCK ----------------
-
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def restock(ctx, *, key_list):
-
-    keys = [
-        key.strip()
-        for key in key_list.split(",")
-        if key.strip()
-    ]
-
-    if not keys:
-        await ctx.send("❌ You didn't provide any keys.")
-        return
-
-    added = add_keys(keys)
-    stock_amount = get_stock()
-
-    await ctx.send(
-        f"✅ **Restocked!**\n\n"
-        f"➕ Added: **{added}**\n"
-        f"📦 Stock: **{stock_amount}**"
-    )
-
-
-# ---------------- VIEW KEYS ----------------
-
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def keys(ctx):
-
-    all_keys = get_all_keys()
-
-    if not all_keys:
-        await ctx.send("📦 **Stock is empty.**")
-        return
-
-    text = "\n".join(
-        f"`{key}`" for key in all_keys
-    )
-
-    # Discord message limit protection
-    if len(text) > 1900:
-        text = text[:1900] + "\n..."
-
-    await ctx.send(
-        f"🔐 **Unused Keys**\n\n{text}"
-    )
-
-
-# ---------------- REMOVE KEY ----------------
-
-@bot.command()
-@commands.has_permissions(administrator=True)
-async def remove(ctx, *, key):
-
-    removed = remove_key(key.strip())
-
-    if removed:
-        await ctx.send(
-            f"🗑️ Removed `{key}` from the stock."
-        )
+@bot.command(name="removeproduct")
+@is_admin()
+async def removeproduct(ctx, product: str):
+    """Delete a product entirely from the vault (admin only)."""
+    data = load_data()
+    product_key = product.lower()
+    if product_key in data:
+        del data[product_key]
+        save_data(data)
+        await ctx.send(f"🗑️ Removed product **{product}** from the vault.")
     else:
-        await ctx.send(
-            f"❌ `{key}` wasn't found in stock."
-        )
+        await ctx.send(f"No such product: **{product}**.")
 
 
-# ---------------- ADMIN ERROR ----------------
-
-@bot.event
-async def on_command_error(ctx, error):
-
-    if isinstance(error, commands.MissingPermissions):
-        await ctx.send(
-            "❌ You need **Administrator** permission to use that command."
-        )
-
-    elif isinstance(error, commands.CommandNotFound):
-        return
-
+@restock.error
+@removeproduct.error
+async def admin_error(ctx, error):
+    if isinstance(error, commands.CheckFailure):
+        await ctx.send("🚫 You need Administrator permission to do that.")
     else:
-        print(error)
+        await ctx.send(f"⚠️ Error: {error}")
 
 
-# ---------------- START BOT ----------------
+# ---------- Run ----------
 
-setup_database()
+if __name__ == "__main__":
+    token = os.environ.get("DISCORD_TOKEN")
+    if not token and os.path.exists("token.txt"):
+        with open("token.txt", "r") as f:
+            token = f.read().strip()
 
-token = os.getenv("TOKEN")
+    if not token:
+        raise SystemExit(
+            "No bot token found. Set the DISCORD_TOKEN environment variable "
+            "or create a token.txt file containing your bot token."
+        )
 
-if not token:
-    raise RuntimeError(
-        "TOKEN environment variable is missing!"
-    )
-
-bot.run(token)
+    bot.run(token)
