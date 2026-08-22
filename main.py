@@ -13,6 +13,7 @@ from flask import Flask
 
 DATA_FILE = "keys.json"
 BLACKLIST_FILE = "blacklist.json"
+CLAIMS_FILE = "claims.json"
 PREFIX = "."
 ALLOWED_CHANNEL_ID = 1540428805104074793
 
@@ -81,6 +82,26 @@ def save_blacklist(blacklisted_ids):
 
 def is_blacklisted(user_id):
     return user_id in load_blacklist()
+
+
+# ---------- Claims Helpers ----------
+
+# Each record: {"user": display name, "user_id": int, "key": str, "time": float}
+
+def load_claims():
+    if not os.path.exists(CLAIMS_FILE):
+        return []
+
+    try:
+        with open(CLAIMS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return []
+
+
+def save_claims(claims):
+    with open(CLAIMS_FILE, "w", encoding="utf-8") as f:
+        json.dump(claims, f, indent=2)
 
 
 # ---------- Cooldown / Spam Tracking (in-memory) ----------
@@ -260,6 +281,76 @@ async def view(ctx):
         )
 
 
+# ---------- CHECK ----------
+
+@bot.command(name="check")
+@is_admin()
+async def check(ctx):
+    """
+    Show every claim: the user's display name and the key they got.
+
+    Admin only.
+    """
+
+    claims = load_claims()
+
+    if not claims:
+        await ctx.send("No claims have been made yet.")
+        return
+
+    # Newest claims first
+    lines = [
+        f"`{claim['user']}` -> `{claim['key']}`"
+        for claim in reversed(claims)
+    ]
+
+    listing = "\n".join(lines)
+
+    # Discord message limit
+    if len(listing) > 1900:
+
+        with open(
+            "claims_view.txt",
+            "w",
+            encoding="utf-8"
+        ) as f:
+            f.write(
+                "\n".join(
+                    f"{claim['user']} (id: {claim['user_id']}) -> "
+                    f"{claim['key']}"
+                    for claim in reversed(claims)
+                )
+            )
+
+        await ctx.send(
+            f"**{len(claims)}** claims. Sending them as a file:",
+            file=discord.File("claims_view.txt")
+        )
+
+        os.remove("claims_view.txt")
+
+    else:
+        await ctx.send(
+            f"**{len(claims)}** claims:\n{listing}"
+        )
+
+
+# ---------- CLEARCHECK ----------
+
+@bot.command(name="clearcheck")
+@is_admin()
+async def clearcheck(ctx):
+    """
+    Wipe the claim log.
+
+    Admin only.
+    """
+
+    save_claims([])
+
+    await ctx.send("Claim log has been cleared.")
+
+
 # ---------- UNBLACKLIST ----------
 
 @bot.command(name="unblacklist")
@@ -411,6 +502,18 @@ async def key(ctx):
         _last_claim[user_id] = time.time()
         _spam_count.pop(user_id, None)
 
+        # Log the claim (display name + key)
+        claims = load_claims()
+
+        claims.append({
+            "user": ctx.author.display_name,
+            "user_id": user_id,
+            "key": picked_key,
+            "time": time.time()
+        })
+
+        save_claims(claims)
+
     except discord.Forbidden:
 
         # Put the key back if the DM failed
@@ -433,6 +536,8 @@ async def key(ctx):
 @view.error
 @clear.error
 @unblacklist.error
+@check.error
+@clearcheck.error
 async def admin_error(ctx, error):
 
     if isinstance(error, commands.CheckFailure):
