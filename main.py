@@ -316,7 +316,7 @@ async def check(ctx):
         ) as f:
             f.write(
                 "\n".join(
-                    f"{claim['user']} (id: {claim['user_id']}) -> "
+                    f"{claim['display']} (id: {claim['user_id']}) -> "
                     f"{claim['key']}"
                     for claim in reversed(claims)
                 )
@@ -349,6 +349,36 @@ async def clearcheck(ctx):
     save_claims([])
 
     await ctx.send("Claim log has been cleared.")
+
+
+# ---------- BLACKLIST (manual) ----------
+
+@bot.command(name="blacklist")
+@is_admin()
+async def blacklist(ctx, user_id: int):
+    """
+    Manually blacklist a user so they can't use .key.
+
+    Admin only.
+
+    Usage:
+    .blacklist <user_id>
+    """
+
+    blacklisted = load_blacklist()
+
+    if user_id in blacklisted:
+        await ctx.send(f"User `{user_id}` is already blacklisted.")
+        return
+
+    blacklisted.add(user_id)
+
+    save_blacklist(blacklisted)
+
+    # Clear any pending spam counter for them
+    _spam_count.pop(user_id, None)
+
+    await ctx.send(f"User `{user_id}` has been blacklisted.")
 
 
 # ---------- UNBLACKLIST ----------
@@ -536,6 +566,7 @@ async def key(ctx):
 @view.error
 @clear.error
 @unblacklist.error
+@blacklist.error
 @check.error
 @clearcheck.error
 async def admin_error(ctx, error):
@@ -550,7 +581,7 @@ async def admin_error(ctx, error):
 
         await ctx.send(
             f" Invalid usage: `{error.argument}`. "
-            "Provide the user's ID."
+            "Provide a valid user ID."
         )
 
     else:
