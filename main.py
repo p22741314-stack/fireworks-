@@ -161,7 +161,13 @@ async def restrict_channel(ctx):
     """
     Non-admins can only use commands in the allowed channel.
     Admins can use commands anywhere.
+    The .key command is exempt from this restriction entirely
+    (it can be used in any server channel, just not in DMs).
     """
+
+    # .key works in any channel of the server
+    if ctx.command and ctx.command.name == "key":
+        return True
 
     if ctx.author.guild_permissions.administrator:
         return True
@@ -452,6 +458,9 @@ async def key(ctx):
     The key is removed from stock and sent through DM.
     Non-admins are limited by a cooldown; spamming gets you
     auto-blacklisted. Admins are exempt from all of this.
+
+    Can be used in any channel of the server (not restricted
+    to ALLOWED_CHANNEL_ID), but still not usable in bot DMs.
     """
 
     user_id = ctx.author.id
