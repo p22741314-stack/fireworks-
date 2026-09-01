@@ -2,7 +2,6 @@ import json
 import os
 import random
 import threading
-import time
 
 import discord
 from discord.ext import commands
@@ -12,7 +11,7 @@ from flask import Flask
 # ---------- Configuration ----------
 
 DATA_FILE = "keys.json"
-PREFIX = "!"
+PREFIX = "."
 
 
 # ---------- Render Web Server ----------
@@ -81,7 +80,7 @@ async def on_ready():
 async def admin_only(ctx):
     """Only administrators can use any command."""
     if not ctx.author.guild_permissions.administrator:
-        await ctx.send("❌ You need Administrator permission to use this bot.")
+        await ctx.send("You need Administrator permission to use this bot.")
         return False
     return True
 
@@ -101,13 +100,13 @@ async def restock(ctx):
     """
     
     if not ctx.message.attachments:
-        await ctx.send("📎 Attach a `.txt` file with the message, one key per line.")
+        await ctx.send("Attach a .txt file with the message, one key per line.")
         return
     
     attachment = ctx.message.attachments[0]
     
     if not attachment.filename.lower().endswith(".txt"):
-        await ctx.send("❌ Please attach a plain `.txt` file.")
+        await ctx.send("Please attach a plain .txt file.")
         return
     
     raw_bytes = await attachment.read()
@@ -115,7 +114,7 @@ async def restock(ctx):
     try:
         raw_text = raw_bytes.decode("utf-8")
     except UnicodeDecodeError:
-        await ctx.send("❌ Couldn't read that file. Make sure it is UTF-8 text.")
+        await ctx.send("Couldn't read that file. Make sure it is UTF-8 text.")
         return
     
     new_keys = [
@@ -125,7 +124,7 @@ async def restock(ctx):
     ]
     
     if not new_keys:
-        await ctx.send("❌ That file didn't have any keys in it. Use one key per line.")
+        await ctx.send("That file didn't have any keys in it. Use one key per line.")
         return
     
     keys = load_keys()
@@ -133,8 +132,8 @@ async def restock(ctx):
     save_keys(keys)
     
     await ctx.send(
-        f"✅ Added **{len(new_keys)}** keys from `{attachment.filename}`.\n"
-        f"📦 Total in stock: **{len(keys)}**."
+        f"Added {len(new_keys)} keys from {attachment.filename}.\n"
+        f"Total in stock: {len(keys)}."
     )
 
 
@@ -153,7 +152,7 @@ async def key(ctx):
     keys = load_keys()
     
     if not keys:
-        await ctx.send("❌ The vault is empty! Use `!restock` to add keys.")
+        await ctx.send("The vault is empty. Use .restock to add keys.")
         return
     
     # Pick a random key
@@ -165,10 +164,25 @@ async def key(ctx):
     
     # Send the key publicly
     await ctx.send(
-        f"🔑 **Here's your key:**\n"
-        f"`{picked_key}`\n"
-        f"\n📦 Remaining stock: **{len(keys)}** keys"
+        f"Key: {picked_key}\n"
+        f"Remaining stock: {len(keys)}"
     )
+
+
+# ---------- CLEARSTOCK COMMAND ----------
+
+@bot.command(name="clearstock")
+@is_admin()
+async def clearstock(ctx):
+    """
+    Delete every key from the vault.
+    
+    Admin only.
+    """
+    
+    save_keys([])
+    
+    await ctx.send("Stock has been cleared.")
 
 
 # ---------- Error Handling ----------
@@ -179,7 +193,7 @@ async def on_command_error(ctx, error):
         # This is handled by the global check
         pass
     else:
-        await ctx.send(f"❌ Error: {error}")
+        await ctx.send(f"Error: {error}")
 
 
 # ---------- Run Bot ----------
