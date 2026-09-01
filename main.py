@@ -179,6 +179,33 @@ async def key(ctx):
     await ctx.send(f"Key: `{picked_key}`")
 
 
+# ---------- STOCK COMMAND ----------
+
+@bot.command(name="stock")
+async def stock(ctx):
+    """
+    Check how many keys are in the vault.
+    
+    Usage:
+    .stock
+    Admin only.
+    """
+    
+    # Check if user is admin
+    if not ctx.author.guild_permissions.administrator:
+        await ctx.send("You need Administrator permission to use this command.")
+        return
+    
+    keys = load_keys()
+    count = len(keys)
+    
+    # Delete the command message
+    await delete_command_message(ctx)
+    
+    # Send stock count
+    await ctx.send(f"{count} keys in vault")
+
+
 # ---------- CLEARSTOCK COMMAND ----------
 
 @bot.command(name="clearstock")
