@@ -210,7 +210,7 @@ class KeyButtonView(View):
         # Create detailed embed for the key (ephemeral - only visible to the user)
         embed = discord.Embed(
             title="Key Generated",
-            description=f"**Your Key:**\n```\n{picked_key}\n```",
+            description=f"**Your Key:**\n`{picked_key}`",
             color=discord.Color.dark_blue()
         )
         
