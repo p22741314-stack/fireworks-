@@ -78,13 +78,13 @@ async def delete_command_message(ctx):
         pass  # Other error occurred
 
 
-# ---------- Global Check - Silent Delete for Non-Admins ----------
+# ---------- Global Check - Block Non-Admins ----------
 
 @bot.check
-async def admin_only_silent(ctx):
+async def admin_only(ctx):
     """
     Only administrators can use commands.
-    Non-admins get their message silently deleted.
+    Non-admins get blocked silently.
     """
     if not ctx.author.guild_permissions.administrator:
         # Delete the command message without sending a reply
@@ -110,12 +110,10 @@ async def restock(ctx):
     Admin only.
     """
     
-    # Delete the command message
-    await delete_command_message(ctx)
-    
-    # Check for attachment
+    # Check for attachment first
     if not ctx.message.attachments:
         await ctx.send("Attach a `.txt` file with the message, one key per line.")
+        await delete_command_message(ctx)
         return
     
     # Get attachment info
@@ -124,6 +122,7 @@ async def restock(ctx):
     
     if not filename.lower().endswith(".txt"):
         await ctx.send("Please attach a plain `.txt` file.")
+        await delete_command_message(ctx)
         return
     
     # Read the file
@@ -133,6 +132,7 @@ async def restock(ctx):
         raw_text = raw_bytes.decode("utf-8")
     except UnicodeDecodeError:
         await ctx.send("Couldn't read that file. Make sure it is UTF-8 text.")
+        await delete_command_message(ctx)
         return
     
     new_keys = [
@@ -143,12 +143,16 @@ async def restock(ctx):
     
     if not new_keys:
         await ctx.send("That file didn't have any keys in it. Use one key per line.")
+        await delete_command_message(ctx)
         return
     
     # Add keys to stock
     keys = load_keys()
     keys.extend(new_keys)
     save_keys(keys)
+    
+    # Delete the command message after successful restock
+    await delete_command_message(ctx)
     
     await ctx.send(
         f"Added {len(new_keys)} keys from `{filename}`.\n"
@@ -167,13 +171,11 @@ async def key(ctx):
     Admin only.
     """
     
-    # Delete the command message
-    await delete_command_message(ctx)
-    
     keys = load_keys()
     
     if not keys:
         await ctx.send("The vault is empty. Use `.restock` to add keys.")
+        await delete_command_message(ctx)
         return
     
     # Pick a random key
@@ -182,6 +184,9 @@ async def key(ctx):
     
     # Save immediately so the key is removed
     save_keys(keys)
+    
+    # Delete the command message
+    await delete_command_message(ctx)
     
     # Send the key publicly
     await ctx.send(f"Key: `{picked_key}`")
@@ -199,11 +204,11 @@ async def stock(ctx):
     Admin only.
     """
     
-    # Delete the command message
-    await delete_command_message(ctx)
-    
     keys = load_keys()
     count = len(keys)
+    
+    # Delete the command message
+    await delete_command_message(ctx)
     
     # Send stock count
     await ctx.send(f"{count} keys in vault")
@@ -219,10 +224,10 @@ async def clearstock(ctx):
     Admin only.
     """
     
+    save_keys([])
+    
     # Delete the command message
     await delete_command_message(ctx)
-    
-    save_keys([])
     
     await ctx.send("Stock has been cleared.")
 
