@@ -58,14 +58,6 @@ bot = commands.Bot(
 )
 
 
-# ---------- Admin Check ----------
-
-def is_admin():
-    async def predicate(ctx):
-        return ctx.author.guild_permissions.administrator
-    return commands.check(predicate)
-
-
 # ---------- Events ----------
 
 @bot.event
@@ -74,21 +66,9 @@ async def on_ready():
     print("Key Bot is online!")
 
 
-# ---------- Global Check - Only Admins ----------
-
-@bot.check
-async def admin_only(ctx):
-    """Only administrators can use any command."""
-    if not ctx.author.guild_permissions.administrator:
-        await ctx.send("You need Administrator permission to use this bot.")
-        return False
-    return True
-
-
 # ---------- RESTOCK COMMAND ----------
 
 @bot.command(name="restock")
-@is_admin()
 async def restock(ctx):
     """
     Add keys to the vault.
@@ -97,7 +77,13 @@ async def restock(ctx):
     .restock
     
     Attach a .txt file with one key per line.
+    Admin only.
     """
+    
+    # Check if user is admin
+    if not ctx.author.guild_permissions.administrator:
+        await ctx.send("You need Administrator permission to use this command.")
+        return
     
     if not ctx.message.attachments:
         await ctx.send("Attach a .txt file with the message, one key per line.")
@@ -140,7 +126,6 @@ async def restock(ctx):
 # ---------- KEY COMMAND ----------
 
 @bot.command(name="key")
-@is_admin()
 async def key(ctx):
     """
     Display a random key from stock.
@@ -148,6 +133,11 @@ async def key(ctx):
     The key is removed from stock and shown publicly.
     Admin only.
     """
+    
+    # Check if user is admin
+    if not ctx.author.guild_permissions.administrator:
+        await ctx.send("You need Administrator permission to use this command.")
+        return
     
     keys = load_keys()
     
@@ -172,13 +162,17 @@ async def key(ctx):
 # ---------- CLEARSTOCK COMMAND ----------
 
 @bot.command(name="clearstock")
-@is_admin()
 async def clearstock(ctx):
     """
     Delete every key from the vault.
     
     Admin only.
     """
+    
+    # Check if user is admin
+    if not ctx.author.guild_permissions.administrator:
+        await ctx.send("You need Administrator permission to use this command.")
+        return
     
     save_keys([])
     
@@ -189,8 +183,8 @@ async def clearstock(ctx):
 
 @bot.event
 async def on_command_error(ctx, error):
-    if isinstance(error, commands.CheckFailure):
-        # This is handled by the global check
+    if isinstance(error, commands.CommandNotFound):
+        # Ignore unknown commands
         pass
     else:
         await ctx.send(f"Error: {error}")
