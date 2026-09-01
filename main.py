@@ -12,33 +12,20 @@ from flask import Flask
 # ---------- Configuration ----------
 
 DATA_FILE = "keys.json"
-BLACKLIST_FILE = "blacklist.json"
-CLAIMS_FILE = "claims.json"
-PREFIX = "."
-ALLOWED_CHANNEL_ID = 1540428805104074793
-
-# Non-admins must wait this many seconds between claims.
-# Admins are exempt.
-KEY_COOLDOWN_SECONDS = 30
-
-# Number of spam attempts while on cooldown before auto-blacklist.
-SPAM_LIMIT = 2
+PREFIX = "!"
 
 
 # ---------- Render Web Server ----------
 
 app = Flask(__name__)
 
-
 @app.route("/")
 def home():
-    return "Key Vault Bot is online!"
-
+    return "Key Bot is online!"
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-
 
 # Start the web server in the background
 threading.Thread(target=run_web, daemon=True).start()
@@ -56,61 +43,9 @@ def load_keys():
     except (json.JSONDecodeError, OSError):
         return []
 
-
 def save_keys(keys):
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(keys, f, indent=2)
-
-
-# ---------- Blacklist Helpers ----------
-
-def load_blacklist():
-    if not os.path.exists(BLACKLIST_FILE):
-        return set()
-
-    try:
-        with open(BLACKLIST_FILE, "r", encoding="utf-8") as f:
-            return set(json.load(f))
-    except (json.JSONDecodeError, OSError):
-        return set()
-
-
-def save_blacklist(blacklisted_ids):
-    with open(BLACKLIST_FILE, "w", encoding="utf-8") as f:
-        json.dump(sorted(blacklisted_ids), f, indent=2)
-
-
-def is_blacklisted(user_id):
-    return user_id in load_blacklist()
-
-
-# ---------- Claims Helpers ----------
-
-# Each record: {"user": display name, "user_id": int, "key": str, "time": float}
-
-def load_claims():
-    if not os.path.exists(CLAIMS_FILE):
-        return []
-
-    try:
-        with open(CLAIMS_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except (json.JSONDecodeError, OSError):
-        return []
-
-
-def save_claims(claims):
-    with open(CLAIMS_FILE, "w", encoding="utf-8") as f:
-        json.dump(claims, f, indent=2)
-
-
-# ---------- Cooldown / Spam Tracking (in-memory) ----------
-
-# user_id -> timestamp of last successful claim (unix seconds)
-_last_claim = {}
-
-# user_id -> number of spam attempts while on cooldown
-_spam_count = {}
 
 
 # ---------- Bot Setup ----------
@@ -129,7 +64,6 @@ bot = commands.Bot(
 def is_admin():
     async def predicate(ctx):
         return ctx.author.guild_permissions.administrator
-
     return commands.check(predicate)
 
 
@@ -138,490 +72,131 @@ def is_admin():
 @bot.event
 async def on_ready():
     print(f"Logged in as {bot.user} (id: {bot.user.id})")
-    print("Key Vault Bot is online!")
+    print("Key Bot is online!")
 
 
-# ---------- Global Checks ----------
+# ---------- Global Check - Only Admins ----------
 
 @bot.check
-async def block_dms(ctx):
-    """Commands cannot be used in DMs."""
-
-    if ctx.guild is None:
-        await ctx.send(
-            "Commands can't be used in DMs, use them in the server."
-        )
+async def admin_only(ctx):
+    """Only administrators can use any command."""
+    if not ctx.author.guild_permissions.administrator:
+        await ctx.send("❌ You need Administrator permission to use this bot.")
         return False
-
     return True
 
 
-@bot.check
-async def restrict_channel(ctx):
-    """
-    Non-admins can only use commands in the allowed channel.
-    Admins can use commands anywhere.
-    The .key command is exempt from this restriction entirely
-    (it can be used in any server channel, just not in DMs).
-    """
-
-    # .key works in any channel of the server
-    if ctx.command and ctx.command.name == "key":
-        return True
-
-    if ctx.author.guild_permissions.administrator:
-        return True
-
-    if ctx.channel.id != ALLOWED_CHANNEL_ID:
-        await ctx.send(
-            f"Commands can only be used in <#{ALLOWED_CHANNEL_ID}>."
-        )
-        return False
-
-    return True
-
-
-# ---------- RESTOCK ----------
+# ---------- RESTOCK COMMAND ----------
 
 @bot.command(name="restock")
 @is_admin()
 async def restock(ctx):
     """
     Add keys to the vault.
-
+    
     Usage:
     .restock
-
+    
     Attach a .txt file with one key per line.
     """
-
+    
     if not ctx.message.attachments:
-        await ctx.send(
-            "Attach a `.txt` file with the message, one key per line."
-        )
+        await ctx.send("📎 Attach a `.txt` file with the message, one key per line.")
         return
-
+    
     attachment = ctx.message.attachments[0]
-
+    
     if not attachment.filename.lower().endswith(".txt"):
-        await ctx.send("Please attach a plain `.txt` file.")
+        await ctx.send("❌ Please attach a plain `.txt` file.")
         return
-
+    
     raw_bytes = await attachment.read()
-
+    
     try:
         raw_text = raw_bytes.decode("utf-8")
     except UnicodeDecodeError:
-        await ctx.send(
-            "Couldn't read that file. Make sure it is UTF-8 text."
-        )
+        await ctx.send("❌ Couldn't read that file. Make sure it is UTF-8 text.")
         return
-
+    
     new_keys = [
         line.strip()
         for line in raw_text.splitlines()
         if line.strip()
     ]
-
+    
     if not new_keys:
-        await ctx.send(
-            "That file didn't have any keys in it. "
-            "Use one key per line."
-        )
+        await ctx.send("❌ That file didn't have any keys in it. Use one key per line.")
         return
-
+    
     keys = load_keys()
-
     keys.extend(new_keys)
-
     save_keys(keys)
-
+    
     await ctx.send(
-        f"Added **{len(new_keys)}** keys from `{attachment.filename}`.\n"
-        f"Total in stock: **{len(keys)}**."
+        f"✅ Added **{len(new_keys)}** keys from `{attachment.filename}`.\n"
+        f"📦 Total in stock: **{len(keys)}**."
     )
 
 
-# ---------- VIEW ----------
-
-@bot.command(name="view")
-@is_admin()
-async def view(ctx):
-    """
-    View every key currently in stock.
-
-    Admin only.
-    """
-
-    keys = load_keys()
-
-    if not keys:
-        await ctx.send("The vault is empty.")
-        return
-
-    listing = "\n".join(
-        f"`{key}`"
-        for key in keys
-    )
-
-    # Discord message limit
-    if len(listing) > 1900:
-
-        with open(
-            "stock_view.txt",
-            "w",
-            encoding="utf-8"
-        ) as f:
-            f.write("\n".join(keys))
-
-        await ctx.send(
-            f"**{len(keys)}** keys in stock. Sending them as a file:",
-            file=discord.File("stock_view.txt")
-        )
-
-        os.remove("stock_view.txt")
-
-    else:
-        await ctx.send(
-            f"**{len(keys)}** keys in stock:\n{listing}"
-        )
-
-
-# ---------- CHECK ----------
-
-@bot.command(name="check")
-@is_admin()
-async def check(ctx):
-    """
-    Show every claim: the user's display name and the key they got.
-
-    Admin only.
-    """
-
-    claims = load_claims()
-
-    if not claims:
-        await ctx.send("No claims have been made yet.")
-        return
-
-    # Newest claims first
-    lines = [
-        f"`{claim['user']}` -> `{claim['key']}`"
-        for claim in reversed(claims)
-    ]
-
-    listing = "\n".join(lines)
-
-    # Discord message limit
-    if len(listing) > 1900:
-
-        with open(
-            "claims_view.txt",
-            "w",
-            encoding="utf-8"
-        ) as f:
-            f.write(
-                "\n".join(
-                    f"{claim['display']} (id: {claim['user_id']}) -> "
-                    f"{claim['key']}"
-                    for claim in reversed(claims)
-                )
-            )
-
-        await ctx.send(
-            f"**{len(claims)}** claims. Sending them as a file:",
-            file=discord.File("claims_view.txt")
-        )
-
-        os.remove("claims_view.txt")
-
-    else:
-        await ctx.send(
-            f"**{len(claims)}** claims:\n{listing}"
-        )
-
-
-# ---------- CLEARCHECK ----------
-
-@bot.command(name="clearcheck")
-@is_admin()
-async def clearcheck(ctx):
-    """
-    Wipe the claim log.
-
-    Admin only.
-    """
-
-    save_claims([])
-
-    await ctx.send("Claim log has been cleared.")
-
-
-# ---------- BLACKLIST (manual) ----------
-
-@bot.command(name="blacklist")
-@is_admin()
-async def blacklist(ctx, user_id: int):
-    """
-    Manually blacklist a user so they can't use .key.
-
-    Admin only.
-
-    Usage:
-    .blacklist <user_id>
-    """
-
-    blacklisted = load_blacklist()
-
-    if user_id in blacklisted:
-        await ctx.send(f"User `{user_id}` is already blacklisted.")
-        return
-
-    blacklisted.add(user_id)
-
-    save_blacklist(blacklisted)
-
-    # Clear any pending spam counter for them
-    _spam_count.pop(user_id, None)
-
-    await ctx.send(f"User `{user_id}` has been blacklisted.")
-
-
-# ---------- UNBLACKLIST ----------
-
-@bot.command(name="unblacklist")
-@is_admin()
-async def unblacklist(ctx, user_id: int):
-    """
-    Remove a user from the blacklist.
-
-    Admin only.
-
-    Usage:
-    .unblacklist <user_id>
-    """
-
-    blacklisted = load_blacklist()
-
-    if user_id not in blacklisted:
-        await ctx.send(f"User `{user_id}` is not blacklisted.")
-        return
-
-    blacklisted.discard(user_id)
-
-    save_blacklist(blacklisted)
-
-    # Reset their spam counter too
-    _spam_count.pop(user_id, None)
-
-    await ctx.send(f"User `{user_id}` has been unblacklisted.")
-
-
-# ---------- CLEAR ----------
-
-@bot.command(name="clear")
-@is_admin()
-async def clear(ctx):
-    """
-    Delete every key from the vault.
-
-    Admin only.
-    """
-
-    save_keys([])
-
-    await ctx.send("Stock has been cleared.")
-
-
-# ---------- STOCK ----------
-
-@bot.command(name="stock")
-async def stock(ctx):
-    """
-    Show how many keys are available.
-    """
-
-    keys = load_keys()
-
-    await ctx.send(
-        f"Stock: **{len(keys)}** keys remaining."
-    )
-
-
-# ---------- KEY ----------
+# ---------- KEY COMMAND ----------
 
 @bot.command(name="key")
+@is_admin()
 async def key(ctx):
     """
-    Claim a random key.
-
-    The key is removed from stock and sent through DM.
-    Non-admins are limited by a cooldown; spamming gets you
-    auto-blacklisted. Admins are exempt from all of this.
-
-    Can be used in any channel of the server (not restricted
-    to ALLOWED_CHANNEL_ID), but still not usable in bot DMs.
+    Display a random key from stock.
+    
+    The key is removed from stock and shown publicly.
+    Admin only.
     """
-
-    user_id = ctx.author.id
-    is_admin_user = ctx.author.guild_permissions.administrator
-
-    # --- Blacklist check ---
-
-    if is_blacklisted(user_id):
-        await ctx.send(
-            f"{ctx.author.mention} you are blacklisted and cannot "
-            "use this command."
-        )
-        return
-
-    # --- Admin exemption ---
-
-    if is_admin_user:
-        pass  # admins skip cooldown and spam checks
-
-    else:
-        now = time.time()
-        last = _last_claim.get(user_id, 0)
-        remaining = KEY_COOLDOWN_SECONDS - (now - last)
-
-        if remaining > 0:
-            # Spamming while on cooldown
-            _spam_count[user_id] = _spam_count.get(user_id, 0) + 1
-
-            attempts = _spam_count[user_id]
-
-            if attempts >= SPAM_LIMIT:
-                blacklisted = load_blacklist()
-                blacklisted.add(user_id)
-                save_blacklist(blacklisted)
-
-                _spam_count.pop(user_id, None)
-
-                await ctx.send(
-                    f"{ctx.author.mention} you have been "
-                    "**blacklisted** for spamming. Contact an admin "
-                    "to get unblacklisted."
-                )
-                return
-
-            await ctx.send(
-                f"{ctx.author.mention} wait **{int(remaining)}s** "
-                "before claiming another key. "
-                f"(spam warning {attempts}/{SPAM_LIMIT})"
-            )
-            return
-
+    
     keys = load_keys()
-
+    
     if not keys:
-        await ctx.send("Sorry, we're out of stock.")
+        await ctx.send("❌ The vault is empty! Use `!restock` to add keys.")
         return
-
+    
     # Pick a random key
     index = random.randrange(len(keys))
-
     picked_key = keys.pop(index)
-
+    
     # Save immediately so the key is removed
     save_keys(keys)
-
-    try:
-
-        await ctx.author.send(
-            f" Your key:\n`{picked_key}`"
-        )
-
-        await ctx.send(
-            f"{ctx.author.mention} check your DMs! "
-            "Your key has been sent."
-        )
-
-        # Only start the cooldown after a successful claim
-        _last_claim[user_id] = time.time()
-        _spam_count.pop(user_id, None)
-
-        # Log the claim (display name + key)
-        claims = load_claims()
-
-        claims.append({
-            "user": ctx.author.display_name,
-            "user_id": user_id,
-            "key": picked_key,
-            "time": time.time()
-        })
-
-        save_claims(claims)
-
-    except discord.Forbidden:
-
-        # Put the key back if the DM failed
-        keys = load_keys()
-
-        keys.append(picked_key)
-
-        save_keys(keys)
-
-        await ctx.send(
-            f"{ctx.author.mention} I couldn't DM you.\n"
-            "Please enable DMs and try again. "
-            "Your key was returned to stock."
-        )
+    
+    # Send the key publicly
+    await ctx.send(
+        f"🔑 **Here's your key:**\n"
+        f"`{picked_key}`\n"
+        f"\n📦 Remaining stock: **{len(keys)}** keys"
+    )
 
 
-# ---------- Admin Error Handling ----------
+# ---------- Error Handling ----------
 
-@restock.error
-@view.error
-@clear.error
-@unblacklist.error
-@blacklist.error
-@check.error
-@clearcheck.error
-async def admin_error(ctx, error):
-
+@bot.event
+async def on_command_error(ctx, error):
     if isinstance(error, commands.CheckFailure):
-
-        await ctx.send(
-            " You need Administrator permission to do that."
-        )
-
-    elif isinstance(error, commands.BadArgument):
-
-        await ctx.send(
-            f" Invalid usage: `{error.argument}`. "
-            "Provide a valid user ID."
-        )
-
+        # This is handled by the global check
+        pass
     else:
-
-        await ctx.send(
-            f" Error: {error}"
-        )
+        await ctx.send(f"❌ Error: {error}")
 
 
 # ---------- Run Bot ----------
 
 if __name__ == "__main__":
-
+    
     token = os.environ.get("DISCORD_TOKEN")
-
+    
     # Optional local token.txt support
     if not token and os.path.exists("token.txt"):
-
-        with open(
-            "token.txt",
-            "r",
-            encoding="utf-8"
-        ) as f:
+        with open("token.txt", "r", encoding="utf-8") as f:
             token = f.read().strip()
-
+    
     if not token:
-
         raise SystemExit(
             "No bot token found.\n"
-            "Set the DISCORD_TOKEN environment variable "
-            "in Render."
+            "Set the DISCORD_TOKEN environment variable in Render."
         )
-
+    
     bot.run(token)
