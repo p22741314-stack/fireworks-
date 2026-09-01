@@ -166,9 +166,10 @@ async def delete_command_message(ctx):
 # ---------- Key Button View ----------
 
 class KeyButtonView(View):
-    def __init__(self, stock_count):
+    def __init__(self, stock_count, sendkey_message=None):
         super().__init__(timeout=None)
         self.stock_count = stock_count
+        self.sendkey_message = sendkey_message
     
     @discord.ui.button(label="Get Key", style=discord.ButtonStyle.primary, custom_id="get_key")
     async def get_key_button(self, interaction: discord.Interaction, button: Button):
@@ -224,6 +225,42 @@ class KeyButtonView(View):
             claims_remaining = MAX_CLAIMS - user_info["claims"]
         else:
             claims_remaining = "Unlimited (Admin)"
+        
+        # Update the sendkey embed with new stock count
+        if self.sendkey_message:
+            try:
+                # Get current embed
+                old_embed = self.sendkey_message.embeds[0]
+                
+                # Create updated embed
+                new_embed = discord.Embed(
+                    title=old_embed.title,
+                    description=old_embed.description,
+                    color=old_embed.color
+                )
+                
+                # Update fields with new stock count
+                for field in old_embed.fields:
+                    if field.name == "Available Keys":
+                        new_embed.add_field(
+                            name=field.name,
+                            value=f"{len(keys)} keys currently in stock",
+                            inline=field.inline
+                        )
+                    else:
+                        new_embed.add_field(
+                            name=field.name,
+                            value=field.value,
+                            inline=field.inline
+                        )
+                
+                new_embed.timestamp = old_embed.timestamp
+                new_embed.set_footer(text=old_embed.footer.text)
+                
+                # Edit the sendkey message
+                await self.sendkey_message.edit(embed=new_embed)
+            except:
+                pass
         
         # Create detailed embed for the key (ephemeral - only visible to the user)
         embed = discord.Embed(
@@ -341,11 +378,14 @@ async def sendkey(ctx):
     # Add footer
     embed.set_footer(text="Key Vault System")
     
-    # Create view with button
+    # Create view with button and pass the message reference
     view = KeyButtonView(len(keys))
     
     # Send the embed with button
-    await ctx.send(embed=embed, view=view)
+    message = await ctx.send(embed=embed, view=view)
+    
+    # Update the view with the message reference
+    view.sendkey_message = message
 
 
 # ---------- GENS COMMAND ----------
