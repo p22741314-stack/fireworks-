@@ -2,6 +2,7 @@ import json
 import os
 import random
 import threading
+import asyncio
 
 import discord
 from discord.ext import commands
@@ -66,6 +67,18 @@ async def on_ready():
     print("Key Bot is online!")
 
 
+# ---------- Command Message Deletion Helper ----------
+
+async def delete_command_message(ctx):
+    """Delete the user's command message."""
+    try:
+        await ctx.message.delete()
+    except discord.Forbidden:
+        pass  # Bot doesn't have permission to delete messages
+    except discord.HTTPException:
+        pass  # Other error occurred
+
+
 # ---------- RESTOCK COMMAND ----------
 
 @bot.command(name="restock")
@@ -80,19 +93,22 @@ async def restock(ctx):
     Admin only.
     """
     
+    # Delete the command message
+    await delete_command_message(ctx)
+    
     # Check if user is admin
     if not ctx.author.guild_permissions.administrator:
-        await ctx.send("You need Administrator permission to use this command.")
+        await ctx.send("You need Administrator permission to use this command.", delete_after=5)
         return
     
     if not ctx.message.attachments:
-        await ctx.send("Attach a `.txt` file with the message, one key per line.")
+        await ctx.send("Attach a `.txt` file with the message, one key per line.", delete_after=10)
         return
     
     attachment = ctx.message.attachments[0]
     
     if not attachment.filename.lower().endswith(".txt"):
-        await ctx.send("Please attach a plain `.txt` file.")
+        await ctx.send("Please attach a plain `.txt` file.", delete_after=10)
         return
     
     raw_bytes = await attachment.read()
@@ -100,7 +116,7 @@ async def restock(ctx):
     try:
         raw_text = raw_bytes.decode("utf-8")
     except UnicodeDecodeError:
-        await ctx.send("Couldn't read that file. Make sure it is UTF-8 text.")
+        await ctx.send("Couldn't read that file. Make sure it is UTF-8 text.", delete_after=10)
         return
     
     new_keys = [
@@ -110,7 +126,7 @@ async def restock(ctx):
     ]
     
     if not new_keys:
-        await ctx.send("That file didn't have any keys in it. Use one key per line.")
+        await ctx.send("That file didn't have any keys in it. Use one key per line.", delete_after=10)
         return
     
     keys = load_keys()
@@ -119,7 +135,8 @@ async def restock(ctx):
     
     await ctx.send(
         f"Added {len(new_keys)} keys from `{attachment.filename}`.\n"
-        f"Total in stock: {len(keys)}."
+        f"Total in stock: {len(keys)}.",
+        delete_after=15
     )
 
 
@@ -134,15 +151,18 @@ async def key(ctx):
     Admin only.
     """
     
+    # Delete the command message
+    await delete_command_message(ctx)
+    
     # Check if user is admin
     if not ctx.author.guild_permissions.administrator:
-        await ctx.send("You need Administrator permission to use this command.")
+        await ctx.send("You need Administrator permission to use this command.", delete_after=5)
         return
     
     keys = load_keys()
     
     if not keys:
-        await ctx.send("The vault is empty. Use `.restock` to add keys.")
+        await ctx.send("The vault is empty. Use `.restock` to add keys.", delete_after=10)
         return
     
     # Pick a random key
@@ -166,14 +186,17 @@ async def clearstock(ctx):
     Admin only.
     """
     
+    # Delete the command message
+    await delete_command_message(ctx)
+    
     # Check if user is admin
     if not ctx.author.guild_permissions.administrator:
-        await ctx.send("You need Administrator permission to use this command.")
+        await ctx.send("You need Administrator permission to use this command.", delete_after=5)
         return
     
     save_keys([])
     
-    await ctx.send("Stock has been cleared.")
+    await ctx.send("Stock has been cleared.", delete_after=10)
 
 
 # ---------- Error Handling ----------
@@ -184,7 +207,7 @@ async def on_command_error(ctx, error):
         # Ignore unknown commands
         pass
     else:
-        await ctx.send(f"Error: {error}")
+        await ctx.send(f"Error: {error}", delete_after=10)
 
 
 # ---------- Run Bot ----------
