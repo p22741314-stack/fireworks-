@@ -92,24 +92,25 @@ async def restock(ctx):
     Admin only.
     """
     
-    # Delete the command message
-    await delete_command_message(ctx)
-    
     # Check if user is admin
     if not ctx.author.guild_permissions.administrator:
         await ctx.send("You need Administrator permission to use this command.")
         return
     
+    # Check for attachment
     if not ctx.message.attachments:
         await ctx.send("Attach a `.txt` file with the message, one key per line.")
         return
     
+    # Get attachment info
     attachment = ctx.message.attachments[0]
+    filename = attachment.filename
     
-    if not attachment.filename.lower().endswith(".txt"):
+    if not filename.lower().endswith(".txt"):
         await ctx.send("Please attach a plain `.txt` file.")
         return
     
+    # Read the file
     raw_bytes = await attachment.read()
     
     try:
@@ -128,12 +129,16 @@ async def restock(ctx):
         await ctx.send("That file didn't have any keys in it. Use one key per line.")
         return
     
+    # Delete the command message after we've read everything
+    await delete_command_message(ctx)
+    
+    # Add keys to stock
     keys = load_keys()
     keys.extend(new_keys)
     save_keys(keys)
     
     await ctx.send(
-        f"Added {len(new_keys)} keys from `{attachment.filename}`.\n"
+        f"Added {len(new_keys)} keys from `{filename}`.\n"
         f"Total in stock: {len(keys)}."
     )
 
@@ -148,9 +153,6 @@ async def key(ctx):
     The key is removed from stock and shown publicly.
     Admin only.
     """
-    
-    # Delete the command message
-    await delete_command_message(ctx)
     
     # Check if user is admin
     if not ctx.author.guild_permissions.administrator:
@@ -170,6 +172,9 @@ async def key(ctx):
     # Save immediately so the key is removed
     save_keys(keys)
     
+    # Delete the command message
+    await delete_command_message(ctx)
+    
     # Send the key publicly
     await ctx.send(f"Key: `{picked_key}`")
 
@@ -184,15 +189,15 @@ async def clearstock(ctx):
     Admin only.
     """
     
-    # Delete the command message
-    await delete_command_message(ctx)
-    
     # Check if user is admin
     if not ctx.author.guild_permissions.administrator:
         await ctx.send("You need Administrator permission to use this command.")
         return
     
     save_keys([])
+    
+    # Delete the command message
+    await delete_command_message(ctx)
     
     await ctx.send("Stock has been cleared.")
 
