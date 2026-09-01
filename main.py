@@ -117,6 +117,10 @@ def get_all_user_data():
     """Get all user data."""
     return load_user_data()
 
+def clear_all_user_data():
+    """Clear all user data."""
+    save_user_data({})
+
 
 # ---------- Helper to get display name ----------
 
@@ -657,6 +661,43 @@ async def logs(ctx):
     # Send all embeds
     for embed in embeds:
         await ctx.send(embed=embed)
+
+
+# ---------- CLOGS COMMAND ----------
+
+@bot.command(name="clogs")
+async def clogs(ctx):
+    """
+    Clear all logs (user claim data).
+    
+    Usage:
+    .clogs
+    
+    Admin only.
+    """
+    
+    # Check if user is admin
+    if not ctx.author.guild_permissions.administrator:
+        await ctx.send("You need Administrator permission to use this command.")
+        await delete_command_message(ctx)
+        return
+    
+    # Delete the command message
+    await delete_command_message(ctx)
+    
+    # Get current user count before clearing
+    user_data = get_all_user_data()
+    count = len(user_data)
+    
+    if count == 0:
+        await ctx.send("No logs to clear. User data is already empty.")
+        return
+    
+    # Clear all user data
+    clear_all_user_data()
+    
+    # Send confirmation
+    await ctx.send(f"All logs have been cleared. {count} user records removed.")
 
 
 # ---------- RESTOCK COMMAND ----------
