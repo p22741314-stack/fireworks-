@@ -78,6 +78,24 @@ async def delete_command_message(ctx):
         pass  # Other error occurred
 
 
+# ---------- Global Check - Silent Delete for Non-Admins ----------
+
+@bot.check
+async def admin_only_silent(ctx):
+    """
+    Only administrators can use commands.
+    Non-admins get their message silently deleted.
+    """
+    if not ctx.author.guild_permissions.administrator:
+        # Delete the command message without sending a reply
+        try:
+            await ctx.message.delete()
+        except:
+            pass
+        return False
+    return True
+
+
 # ---------- RESTOCK COMMAND ----------
 
 @bot.command(name="restock")
@@ -92,10 +110,8 @@ async def restock(ctx):
     Admin only.
     """
     
-    # Check if user is admin
-    if not ctx.author.guild_permissions.administrator:
-        await ctx.send("You need Administrator permission to use this command.")
-        return
+    # Delete the command message
+    await delete_command_message(ctx)
     
     # Check for attachment
     if not ctx.message.attachments:
@@ -129,9 +145,6 @@ async def restock(ctx):
         await ctx.send("That file didn't have any keys in it. Use one key per line.")
         return
     
-    # Delete the command message after we've read everything
-    await delete_command_message(ctx)
-    
     # Add keys to stock
     keys = load_keys()
     keys.extend(new_keys)
@@ -154,10 +167,8 @@ async def key(ctx):
     Admin only.
     """
     
-    # Check if user is admin
-    if not ctx.author.guild_permissions.administrator:
-        await ctx.send("You need Administrator permission to use this command.")
-        return
+    # Delete the command message
+    await delete_command_message(ctx)
     
     keys = load_keys()
     
@@ -171,9 +182,6 @@ async def key(ctx):
     
     # Save immediately so the key is removed
     save_keys(keys)
-    
-    # Delete the command message
-    await delete_command_message(ctx)
     
     # Send the key publicly
     await ctx.send(f"Key: `{picked_key}`")
@@ -191,16 +199,11 @@ async def stock(ctx):
     Admin only.
     """
     
-    # Check if user is admin
-    if not ctx.author.guild_permissions.administrator:
-        await ctx.send("You need Administrator permission to use this command.")
-        return
+    # Delete the command message
+    await delete_command_message(ctx)
     
     keys = load_keys()
     count = len(keys)
-    
-    # Delete the command message
-    await delete_command_message(ctx)
     
     # Send stock count
     await ctx.send(f"{count} keys in vault")
@@ -216,15 +219,10 @@ async def clearstock(ctx):
     Admin only.
     """
     
-    # Check if user is admin
-    if not ctx.author.guild_permissions.administrator:
-        await ctx.send("You need Administrator permission to use this command.")
-        return
-    
-    save_keys([])
-    
     # Delete the command message
     await delete_command_message(ctx)
+    
+    save_keys([])
     
     await ctx.send("Stock has been cleared.")
 
@@ -233,7 +231,10 @@ async def clearstock(ctx):
 
 @bot.event
 async def on_command_error(ctx, error):
-    if isinstance(error, commands.CommandNotFound):
+    if isinstance(error, commands.CheckFailure):
+        # Already handled by the global check
+        pass
+    elif isinstance(error, commands.CommandNotFound):
         # Ignore unknown commands
         pass
     else:
