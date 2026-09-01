@@ -2,6 +2,7 @@ import json
 import os
 import random
 import threading
+import asyncio
 
 import discord
 from discord.ext import commands
@@ -12,6 +13,7 @@ from flask import Flask
 
 DATA_FILE = "keys.json"
 PREFIX = "."
+AUTO_INTERVAL = 15  # seconds between auto keys
 
 
 # ---------- Render Web Server ----------
@@ -60,6 +62,11 @@ bot = commands.Bot(
 # Store the last key message ID to delete it later
 last_key_message_id = None
 
+# Auto mode variables
+auto_mode_enabled = False
+auto_channel_id = None
+auto_task = None
+
 
 # ---------- Events ----------
 
@@ -97,6 +104,124 @@ async def admin_only(ctx):
             pass
         return False
     return True
+
+
+# ---------- Auto Key Function ----------
+
+async def auto_key_loop():
+    """Background task that sends a key every 15 seconds."""
+    global auto_mode_enabled, auto_channel_id, last_key_message_id
+    
+    while auto_mode_enabled:
+        await asyncio.sleep(AUTO_INTERVAL)
+        
+        if not auto_mode_enabled:
+            break
+        
+        # Get the channel
+        channel = bot.get_channel(auto_channel_id)
+        if not channel:
+            auto_mode_enabled = False
+            break
+        
+        # Load keys
+        keys = load_keys()
+        
+        if not keys:
+            # No keys left, stop auto mode
+            await channel.send("Auto mode stopped: No keys left in stock.")
+            auto_mode_enabled = False
+            break
+        
+        # Pick a random key
+        index = random.randrange(len(keys))
+        picked_key = keys.pop(index)
+        
+        # Save immediately so the key is removed
+        save_keys(keys)
+        
+        # Delete the previous key message if it exists
+        if last_key_message_id:
+            try:
+                prev_msg = await channel.fetch_message(last_key_message_id)
+                await prev_msg.delete()
+            except:
+                pass
+        
+        # Send the new key
+        msg = await channel.send(f"Key: `{picked_key}`")
+        last_key_message_id = msg.id
+
+
+# ---------- AUTO COMMAND ----------
+
+@bot.command(name="auto")
+async def auto(ctx):
+    """
+    Start auto mode - sends a key every 15 seconds.
+    
+    Usage:
+    .auto
+    
+    Admin only.
+    """
+    
+    global auto_mode_enabled, auto_channel_id, auto_task
+    
+    # Delete the command message
+    await delete_command_message(ctx)
+    
+    # Check if auto mode is already running
+    if auto_mode_enabled:
+        await ctx.send("Auto mode is already running in this channel.")
+        return
+    
+    # Check if there are keys available
+    keys = load_keys()
+    if not keys:
+        await ctx.send("Cannot start auto mode: The vault is empty. Use `.restock` to add keys first.")
+        return
+    
+    # Start auto mode
+    auto_mode_enabled = True
+    auto_channel_id = ctx.channel.id
+    
+    # Send initial message
+    await ctx.send(f"Auto mode started! Sending a key every {AUTO_INTERVAL} seconds in this channel.")
+    
+    # Start the background task
+    auto_task = asyncio.create_task(auto_key_loop())
+
+
+# ---------- STOPAUTO COMMAND ----------
+
+@bot.command(name="stopauto")
+async def stopauto(ctx):
+    """
+    Stop auto mode.
+    
+    Usage:
+    .stopauto
+    
+    Admin only.
+    """
+    
+    global auto_mode_enabled, auto_task
+    
+    # Delete the command message
+    await delete_command_message(ctx)
+    
+    if not auto_mode_enabled:
+        await ctx.send("Auto mode is not currently running.")
+        return
+    
+    # Stop auto mode
+    auto_mode_enabled = False
+    if auto_task:
+        auto_task.cancel()
+        auto_task = None
+    
+    await ctx.send("Auto mode has been stopped.")
 
 
 # ---------- RESTOCK COMMAND ----------
@@ -240,7 +365,7 @@ async def clearstock(ctx):
     Admin only.
     """
     
-    global last_key_message_id
+    global last_key_message_id, auto_mode_enabled
     
     save_keys([])
     
@@ -250,8 +375,13 @@ async def clearstock(ctx):
             prev_msg = await ctx.channel.fetch_message(last_key_message_id)
             await prev_msg.delete()
         except:
-            pass  # Message might have been deleted already
+            pass
         last_key_message_id = None
+    
+    # Stop auto mode if running
+    if auto_mode_enabled:
+        auto_mode_enabled = False
+        await ctx.send("Auto mode has been stopped because stock was cleared.")
     
     # Delete the command message
     await delete_command_message(ctx)
