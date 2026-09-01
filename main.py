@@ -124,9 +124,6 @@ bot = commands.Bot(
     intents=intents
 )
 
-# Store the last key message ID to delete it later
-last_key_message_id = None
-
 
 # ---------- Events ----------
 
@@ -158,7 +155,6 @@ class KeyButtonView(View):
     @discord.ui.button(label="Get Key", style=discord.ButtonStyle.primary, custom_id="get_key")
     async def get_key_button(self, interaction: discord.Interaction, button: Button):
         """Handle the Get Key button press."""
-        global last_key_message_id
         
         user_id = interaction.user.id
         is_admin = interaction.user.guild_permissions.administrator
@@ -211,21 +207,7 @@ class KeyButtonView(View):
         else:
             claims_remaining = "Unlimited (Admin)"
         
-        # Delete the previous key message if it exists
-        if last_key_message_id:
-            try:
-                prev_msg = await interaction.channel.fetch_message(last_key_message_id)
-                await prev_msg.delete()
-            except:
-                pass
-        
-        # Delete the button press message
-        try:
-            await interaction.message.delete()
-        except:
-            pass
-        
-        # Create detailed embed for the key
+        # Create detailed embed for the key (ephemeral - only visible to the user)
         embed = discord.Embed(
             title="Key Generated",
             description=f"**Your Key:**\n```\n{picked_key}\n```",
@@ -274,14 +256,8 @@ class KeyButtonView(View):
         # Add footer
         embed.set_footer(text="Key Vault System")
         
-        # Send the new key with the button again
-        view = KeyButtonView(len(keys))
-        msg = await interaction.channel.send(embed=embed, view=view)
-        
-        # Store the new message ID
-        last_key_message_id = msg.id
-        
-        await interaction.response.send_message("Key claimed successfully!", ephemeral=True)
+        # Send the key as ephemeral (only visible to the user who clicked)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 # ---------- SENDKEY COMMAND ----------
@@ -296,6 +272,12 @@ async def sendkey(ctx):
     
     Admin only.
     """
+    
+    # Check if user is admin
+    if not ctx.author.guild_permissions.administrator:
+        await ctx.send("You need Administrator permission to use this command.")
+        await delete_command_message(ctx)
+        return
     
     # Delete the command message
     await delete_command_message(ctx)
@@ -427,7 +409,7 @@ async def restock(ctx):
     
     # Check for attachment first
     if not ctx.message.attachments:
-        await ctx.send("Attach a .txt file with the message, one key per line.")
+        await ctx.send("Attach a `.txt` file with the message, one key per line.")
         await delete_command_message(ctx)
         return
     
@@ -436,7 +418,7 @@ async def restock(ctx):
     filename = attachment.filename
     
     if not filename.lower().endswith(".txt"):
-        await ctx.send("Please attach a plain .txt file.")
+        await ctx.send("Please attach a plain `.txt` file.")
         await delete_command_message(ctx)
         return
     
@@ -470,7 +452,7 @@ async def restock(ctx):
     await delete_command_message(ctx)
     
     await ctx.send(
-        f"Added {len(new_keys)} keys from {filename}.\n"
+        f"Added {len(new_keys)} keys from `{filename}`.\n"
         f"Total in stock: {len(keys)}."
     )
 
@@ -519,18 +501,7 @@ async def clearstock(ctx):
         await delete_command_message(ctx)
         return
     
-    global last_key_message_id
-    
     save_keys([])
-    
-    # Delete the previous key message if it exists
-    if last_key_message_id:
-        try:
-            prev_msg = await ctx.channel.fetch_message(last_key_message_id)
-            await prev_msg.delete()
-        except:
-            pass
-        last_key_message_id = None
     
     # Delete the command message
     await delete_command_message(ctx)
