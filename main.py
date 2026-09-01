@@ -13,7 +13,7 @@ from flask import Flask
 
 DATA_FILE = "keys.json"
 PREFIX = "."
-AUTO_INTERVAL = 15  # seconds between auto keys
+AUTO_INTERVAL = 1800  # 30 minutes in seconds (30 * 60)
 
 
 # ---------- Render Web Server ----------
@@ -109,7 +109,7 @@ async def admin_only(ctx):
 # ---------- Auto Key Function ----------
 
 async def auto_key_loop():
-    """Background task that sends a key every 15 seconds."""
+    """Background task that sends a key every 30 minutes."""
     global auto_mode_enabled, auto_channel_id, last_key_message_id
     
     while auto_mode_enabled:
@@ -158,7 +158,7 @@ async def auto_key_loop():
 @bot.command(name="auto")
 async def auto(ctx):
     """
-    Start auto mode - sends a key every 15 seconds.
+    Start auto mode - sends a key every 30 minutes.
     
     Usage:
     .auto
@@ -187,7 +187,7 @@ async def auto(ctx):
     auto_channel_id = ctx.channel.id
     
     # Send initial message
-    await ctx.send(f"Auto mode started! Sending a key every {AUTO_INTERVAL} seconds in this channel.")
+    await ctx.send(f"Auto mode started! Sending a key every 30 minutes in this channel.")
     
     # Start the background task
     auto_task = asyncio.create_task(auto_key_loop())
