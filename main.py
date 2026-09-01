@@ -118,10 +118,24 @@ def get_all_user_data():
     return load_user_data()
 
 
+# ---------- Helper to get display name ----------
+
+async def get_user_display_name(guild, user_id):
+    """Get a user's display name from the guild."""
+    try:
+        member = await guild.fetch_member(user_id)
+        if member:
+            return member.display_name
+    except:
+        pass
+    return f"User {user_id}"
+
+
 # ---------- Bot Setup ----------
 
 intents = discord.Intents.default()
 intents.message_content = True
+intents.members = True  # Required to fetch member info
 
 bot = commands.Bot(
     command_prefix=PREFIX,
@@ -430,9 +444,8 @@ async def logs(ctx):
     # Separate users into categories
     active_users = []
     cooldown_users = []
-    admin_users = []
     
-    # Get guild members for username resolution
+    # Get guild for member info
     guild = ctx.guild
     
     for user_id_str, data in user_data.items():
@@ -440,17 +453,21 @@ async def logs(ctx):
         claims = data["claims"]
         last_claim = data["last_claim"]
         
-        # Check if user is admin
-        member = guild.get_member(user_id)
-        is_admin = False
-        username = f"User {user_id}"
-        
-        if member:
-            username = member.display_name
-            is_admin = member.guild_permissions.administrator
+        # Get user display name
+        try:
+            member = await guild.fetch_member(user_id)
+            if member:
+                username = member.display_name
+                is_admin = member.guild_permissions.administrator
+            else:
+                username = f"Unknown User ({user_id})"
+                is_admin = False
+        except:
+            username = f"Unknown User ({user_id})"
+            is_admin = False
         
         # Calculate cooldown status
-        if claims >= MAX_CLAIMS:
+        if claims >= MAX_CLAIMS and not is_admin:
             time_since_last = time.time() - last_claim
             if time_since_last < COOLDOWN_SECONDS:
                 remaining = int(COOLDOWN_SECONDS - time_since_last)
@@ -467,7 +484,7 @@ async def logs(ctx):
                 })
                 continue
         
-        # Active users (can claim)
+        # Active users (can claim or admins)
         if claims > 0 or is_admin:
             active_users.append({
                 "id": user_id,
