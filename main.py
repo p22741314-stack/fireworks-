@@ -6,6 +6,7 @@ import asyncio
 
 import discord
 from discord.ext import commands
+from discord.ui import Button, View
 from flask import Flask
 
 
@@ -13,7 +14,6 @@ from flask import Flask
 
 DATA_FILE = "keys.json"
 PREFIX = "."
-AUTO_INTERVAL = 1800  # 30 minutes in seconds (30 * 60)
 
 
 # ---------- Render Web Server ----------
@@ -62,11 +62,6 @@ bot = commands.Bot(
 # Store the last key message ID to delete it later
 last_key_message_id = None
 
-# Auto mode variables
-auto_mode_enabled = False
-auto_channel_id = None
-auto_task = None
-
 
 # ---------- Events ----------
 
@@ -106,32 +101,28 @@ async def admin_only(ctx):
     return True
 
 
-# ---------- Auto Key Function ----------
+# ---------- Key Button View ----------
 
-async def auto_key_loop():
-    """Background task that sends a key every 30 minutes."""
-    global auto_mode_enabled, auto_channel_id, last_key_message_id
+class KeyButtonView(View):
+    def __init__(self):
+        super().__init__(timeout=None)
     
-    while auto_mode_enabled:
-        await asyncio.sleep(AUTO_INTERVAL)
+    @discord.ui.button(label="Get Key", style=discord.ButtonStyle.primary, custom_id="get_key")
+    async def get_key_button(self, interaction: discord.Interaction, button: Button):
+        """Handle the Get Key button press."""
+        global last_key_message_id
         
-        if not auto_mode_enabled:
-            break
-        
-        # Get the channel
-        channel = bot.get_channel(auto_channel_id)
-        if not channel:
-            auto_mode_enabled = False
-            break
+        # Check if user is admin
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("You need Administrator permission to use this button.", ephemeral=True)
+            return
         
         # Load keys
         keys = load_keys()
         
         if not keys:
-            # No keys left, stop auto mode
-            await channel.send("Auto mode stopped: No keys left in stock.")
-            auto_mode_enabled = False
-            break
+            await interaction.response.send_message("The vault is empty. Use `.restock` to add keys.", ephemeral=True)
+            return
         
         # Pick a random key
         index = random.randrange(len(keys))
@@ -143,85 +134,70 @@ async def auto_key_loop():
         # Delete the previous key message if it exists
         if last_key_message_id:
             try:
-                prev_msg = await channel.fetch_message(last_key_message_id)
+                prev_msg = await interaction.channel.fetch_message(last_key_message_id)
                 await prev_msg.delete()
             except:
                 pass
         
-        # Send the new key
-        msg = await channel.send(f"Key: `{picked_key}`")
+        # Delete the button press message
+        try:
+            await interaction.message.delete()
+        except:
+            pass
+        
+        # Create embed for the key
+        embed = discord.Embed(
+            title="🔑 Key Generated",
+            description=f"Here's your key:\n`{picked_key}`",
+            color=discord.Color.green()
+        )
+        embed.set_footer(text=f"Remaining stock: {len(keys)} keys")
+        
+        # Send the new key with the button again
+        view = KeyButtonView()
+        msg = await interaction.channel.send(embed=embed, view=view)
+        
+        # Store the new message ID
         last_key_message_id = msg.id
+        
+        await interaction.response.send_message("Key sent successfully!", ephemeral=True)
 
 
-# ---------- AUTO COMMAND ----------
+# ---------- SENDKEY COMMAND ----------
 
-@bot.command(name="auto")
-async def auto(ctx):
+@bot.command(name="sendkey")
+async def sendkey(ctx):
     """
-    Start auto mode - sends a key every 30 minutes.
+    Send an embed with a Get Key button.
     
     Usage:
-    .auto
+    .sendkey
     
     Admin only.
     """
     
-    global auto_mode_enabled, auto_channel_id, auto_task
-    
     # Delete the command message
     await delete_command_message(ctx)
-    
-    # Check if auto mode is already running
-    if auto_mode_enabled:
-        await ctx.send("Auto mode is already running in this channel.")
-        return
     
     # Check if there are keys available
     keys = load_keys()
     if not keys:
-        await ctx.send("Cannot start auto mode: The vault is empty. Use `.restock` to add keys first.")
+        await ctx.send("Cannot send key embed: The vault is empty. Use `.restock` to add keys first.")
         return
     
-    # Start auto mode
-    auto_mode_enabled = True
-    auto_channel_id = ctx.channel.id
+    # Create embed
+    embed = discord.Embed(
+        title="🔑 Get Your Key",
+        description="Click the button below to get a key.",
+        color=discord.Color.blue()
+    )
+    embed.set_footer(text=f"Stock available: {len(keys)} keys")
     
-    # Send initial message
-    await ctx.send(f"Auto mode started! Sending a key every 30 minutes in this channel.")
+    # Create view with button
+    view = KeyButtonView()
     
-    # Start the background task
-    auto_task = asyncio.create_task(auto_key_loop())
-
-
-# ---------- STOPAUTO COMMAND ----------
-
-@bot.command(name="stopauto")
-async def stopauto(ctx):
-    """
-    Stop auto mode.
-    
-    Usage:
-    .stopauto
-    
-    Admin only.
-    """
-    
-    global auto_mode_enabled, auto_task
-    
-    # Delete the command message
-    await delete_command_message(ctx)
-    
-    if not auto_mode_enabled:
-        await ctx.send("Auto mode is not currently running.")
-        return
-    
-    # Stop auto mode
-    auto_mode_enabled = False
-    if auto_task:
-        auto_task.cancel()
-        auto_task = None
-    
-    await ctx.send("Auto mode has been stopped.")
+    # Send the embed with button
+    await ctx.send(embed=embed, view=view)
 
 
 # ---------- RESTOCK COMMAND ----------
@@ -288,51 +264,6 @@ async def restock(ctx):
     )
 
 
-# ---------- KEY COMMAND ----------
-
-@bot.command(name="key")
-async def key(ctx):
-    """
-    Display a random key from stock.
-    
-    The key is removed from stock and shown publicly.
-    Admin only.
-    """
-    
-    global last_key_message_id
-    
-    keys = load_keys()
-    
-    if not keys:
-        await ctx.send("The vault is empty. Use `.restock` to add keys.")
-        await delete_command_message(ctx)
-        return
-    
-    # Pick a random key
-    index = random.randrange(len(keys))
-    picked_key = keys.pop(index)
-    
-    # Save immediately so the key is removed
-    save_keys(keys)
-    
-    # Delete the previous key message if it exists
-    if last_key_message_id:
-        try:
-            prev_msg = await ctx.channel.fetch_message(last_key_message_id)
-            await prev_msg.delete()
-        except:
-            pass  # Message might have been deleted already
-    
-    # Delete the command message
-    await delete_command_message(ctx)
-    
-    # Send the new key publicly
-    msg = await ctx.send(f"Key: `{picked_key}`")
-    
-    # Store the new message ID
-    last_key_message_id = msg.id
-
-
 # ---------- STOCK COMMAND ----------
 
 @bot.command(name="stock")
@@ -365,7 +296,7 @@ async def clearstock(ctx):
     Admin only.
     """
     
-    global last_key_message_id, auto_mode_enabled
+    global last_key_message_id
     
     save_keys([])
     
@@ -377,11 +308,6 @@ async def clearstock(ctx):
         except:
             pass
         last_key_message_id = None
-    
-    # Stop auto mode if running
-    if auto_mode_enabled:
-        auto_mode_enabled = False
-        await ctx.send("Auto mode has been stopped because stock was cleared.")
     
     # Delete the command message
     await delete_command_message(ctx)
