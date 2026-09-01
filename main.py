@@ -3,6 +3,7 @@ import os
 import random
 import threading
 import asyncio
+import time
 
 import discord
 from discord.ext import commands
@@ -13,7 +14,11 @@ from flask import Flask
 # ---------- Configuration ----------
 
 DATA_FILE = "keys.json"
+BLACKLIST_FILE = "blacklist.json"
 PREFIX = "."
+MAX_CLAIMS = 3
+COOLDOWN_HOURS = 1
+COOLDOWN_SECONDS = COOLDOWN_HOURS * 60 * 60  # 3600 seconds
 
 
 # ---------- Render Web Server ----------
@@ -47,6 +52,66 @@ def load_keys():
 def save_keys(keys):
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(keys, f, indent=2)
+
+
+# ---------- User Tracking ----------
+
+USER_DATA_FILE = "user_data.json"
+
+def load_user_data():
+    if not os.path.exists(USER_DATA_FILE):
+        return {}
+
+    try:
+        with open(USER_DATA_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+def save_user_data(user_data):
+    with open(USER_DATA_FILE, "w", encoding="utf-8") as f:
+        json.dump(user_data, f, indent=2)
+
+def get_user_info(user_id):
+    """Get user's claim count and last claim time."""
+    user_data = load_user_data()
+    user_id_str = str(user_id)
+    
+    if user_id_str not in user_data:
+        user_data[user_id_str] = {
+            "claims": 0,
+            "last_claim": 0
+        }
+        save_user_data(user_data)
+    
+    return user_data[user_id_str]
+
+def update_user_claims(user_id):
+    """Update user's claim count and last claim time."""
+    user_data = load_user_data()
+    user_id_str = str(user_id)
+    
+    if user_id_str not in user_data:
+        user_data[user_id_str] = {
+            "claims": 0,
+            "last_claim": 0
+        }
+    
+    user_data[user_id_str]["claims"] += 1
+    user_data[user_id_str]["last_claim"] = time.time()
+    save_user_data(user_data)
+    
+    return user_data[user_id_str]
+
+def reset_user_claims(user_id):
+    """Reset user's claims to 0."""
+    user_data = load_user_data()
+    user_id_str = str(user_id)
+    
+    if user_id_str in user_data:
+        user_data[user_id_str]["claims"] = 0
+        user_data[user_id_str]["last_claim"] = 0
+        save_user_data(user_data)
 
 
 # ---------- Bot Setup ----------
@@ -83,24 +148,6 @@ async def delete_command_message(ctx):
         pass  # Other error occurred
 
 
-# ---------- Global Check - Block Non-Admins ----------
-
-@bot.check
-async def admin_only(ctx):
-    """
-    Only administrators can use commands.
-    Non-admins get blocked silently.
-    """
-    if not ctx.author.guild_permissions.administrator:
-        # Delete the command message without sending a reply
-        try:
-            await ctx.message.delete()
-        except:
-            pass
-        return False
-    return True
-
-
 # ---------- Key Button View ----------
 
 class KeyButtonView(View):
@@ -113,17 +160,41 @@ class KeyButtonView(View):
         """Handle the Get Key button press."""
         global last_key_message_id
         
-        # Check if user is admin
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("You need Administrator permission to use this button.", ephemeral=True)
-            return
+        user_id = interaction.user.id
+        is_admin = interaction.user.guild_permissions.administrator
         
         # Load keys
         keys = load_keys()
         
         if not keys:
-            await interaction.response.send_message("The vault is empty. Use .restock to add keys.", ephemeral=True)
+            await interaction.response.send_message("The vault is empty. Please wait for a restock.", ephemeral=True)
             return
+        
+        # Check user's claim status (skip for admins)
+        if not is_admin:
+            user_info = get_user_info(user_id)
+            claims = user_info["claims"]
+            last_claim = user_info["last_claim"]
+            
+            # Check if user has reached max claims
+            if claims >= MAX_CLAIMS:
+                # Check if cooldown has passed
+                time_since_last = time.time() - last_claim
+                if time_since_last < COOLDOWN_SECONDS:
+                    remaining = int(COOLDOWN_SECONDS - time_since_last)
+                    hours = remaining // 3600
+                    minutes = (remaining % 3600) // 60
+                    seconds = remaining % 60
+                    
+                    await interaction.response.send_message(
+                        f"You have reached the maximum of {MAX_CLAIMS} claims. "
+                        f"Cooldown remaining: {hours}h {minutes}m {seconds}s",
+                        ephemeral=True
+                    )
+                    return
+                else:
+                    # Cooldown passed, reset claims
+                    reset_user_claims(user_id)
         
         # Pick a random key
         index = random.randrange(len(keys))
@@ -131,6 +202,14 @@ class KeyButtonView(View):
         
         # Save immediately so the key is removed
         save_keys(keys)
+        
+        # Update user claims (skip for admins)
+        if not is_admin:
+            update_user_claims(user_id)
+            user_info = get_user_info(user_id)
+            claims_remaining = MAX_CLAIMS - user_info["claims"]
+        else:
+            claims_remaining = "Unlimited (Admin)"
         
         # Delete the previous key message if it exists
         if last_key_message_id:
@@ -169,6 +248,25 @@ class KeyButtonView(View):
             value=interaction.user.mention,
             inline=True
         )
+        
+        # Add claims info (skip for admins)
+        if not is_admin:
+            embed.add_field(
+                name="Your Claims",
+                value=f"{user_info['claims']} of {MAX_CLAIMS} used",
+                inline=True
+            )
+            embed.add_field(
+                name="Claims Remaining",
+                value=f"{claims_remaining} claims left",
+                inline=True
+            )
+        else:
+            embed.add_field(
+                name="Admin Status",
+                value="Unlimited claims (Admin)",
+                inline=True
+            )
         
         # Add timestamp
         embed.timestamp = interaction.created_at
@@ -227,6 +325,11 @@ async def sendkey(ctx):
         inline=True
     )
     embed.add_field(
+        name="Claim Limits",
+        value=f"Each user can claim up to {MAX_CLAIMS} keys per hour.",
+        inline=False
+    )
+    embed.add_field(
         name="Important Notice",
         value="Each key can only be claimed once. Keys are distributed randomly.",
         inline=False
@@ -245,6 +348,63 @@ async def sendkey(ctx):
     await ctx.send(embed=embed, view=view)
 
 
+# ---------- GENS COMMAND ----------
+
+@bot.command(name="gens")
+async def gens(ctx):
+    """
+    Check how many keys you have claimed and how many are remaining.
+    
+    Usage:
+    .gens
+    """
+    
+    # Delete the command message
+    await delete_command_message(ctx)
+    
+    user_id = ctx.author.id
+    is_admin = ctx.author.guild_permissions.administrator
+    
+    if is_admin:
+        await ctx.send("You are an admin. You have unlimited claims.", ephemeral=True)
+        return
+    
+    user_info = get_user_info(user_id)
+    claims = user_info["claims"]
+    last_claim = user_info["last_claim"]
+    
+    # Calculate remaining claims
+    if claims >= MAX_CLAIMS:
+        # Check if cooldown has passed
+        time_since_last = time.time() - last_claim
+        if time_since_last < COOLDOWN_SECONDS:
+            remaining_time = int(COOLDOWN_SECONDS - time_since_last)
+            hours = remaining_time // 3600
+            minutes = (remaining_time % 3600) // 60
+            seconds = remaining_time % 60
+            
+            await ctx.send(
+                f"Your Claims: {claims} of {MAX_CLAIMS} used\n"
+                f"Status: Cooldown active\n"
+                f"Time remaining: {hours}h {minutes}m {seconds}s",
+                ephemeral=True
+            )
+            return
+        else:
+            # Cooldown passed, reset claims
+            reset_user_claims(user_id)
+            claims = 0
+    
+    claims_remaining = MAX_CLAIMS - claims
+    
+    await ctx.send(
+        f"Your Claims: {claims} of {MAX_CLAIMS} used\n"
+        f"Claims Remaining: {claims_remaining}\n"
+        f"Status: Ready to claim",
+        ephemeral=True
+    )
+
+
 # ---------- RESTOCK COMMAND ----------
 
 @bot.command(name="restock")
@@ -258,6 +418,12 @@ async def restock(ctx):
     Attach a .txt file with one key per line.
     Admin only.
     """
+    
+    # Check if user is admin
+    if not ctx.author.guild_permissions.administrator:
+        await ctx.send("You need Administrator permission to use this command.")
+        await delete_command_message(ctx)
+        return
     
     # Check for attachment first
     if not ctx.message.attachments:
@@ -321,6 +487,12 @@ async def stock(ctx):
     Admin only.
     """
     
+    # Check if user is admin
+    if not ctx.author.guild_permissions.administrator:
+        await ctx.send("You need Administrator permission to use this command.")
+        await delete_command_message(ctx)
+        return
+    
     keys = load_keys()
     count = len(keys)
     
@@ -340,6 +512,12 @@ async def clearstock(ctx):
     
     Admin only.
     """
+    
+    # Check if user is admin
+    if not ctx.author.guild_permissions.administrator:
+        await ctx.send("You need Administrator permission to use this command.")
+        await delete_command_message(ctx)
+        return
     
     global last_key_message_id
     
