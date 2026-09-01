@@ -86,13 +86,13 @@ async def restock(ctx):
         return
     
     if not ctx.message.attachments:
-        await ctx.send("Attach a .txt file with the message, one key per line.")
+        await ctx.send("Attach a `.txt` file with the message, one key per line.")
         return
     
     attachment = ctx.message.attachments[0]
     
     if not attachment.filename.lower().endswith(".txt"):
-        await ctx.send("Please attach a plain .txt file.")
+        await ctx.send("Please attach a plain `.txt` file.")
         return
     
     raw_bytes = await attachment.read()
@@ -118,7 +118,7 @@ async def restock(ctx):
     save_keys(keys)
     
     await ctx.send(
-        f"Added {len(new_keys)} keys from {attachment.filename}.\n"
+        f"Added {len(new_keys)} keys from `{attachment.filename}`.\n"
         f"Total in stock: {len(keys)}."
     )
 
@@ -142,7 +142,7 @@ async def key(ctx):
     keys = load_keys()
     
     if not keys:
-        await ctx.send("The vault is empty. Use .restock to add keys.")
+        await ctx.send("The vault is empty. Use `.restock` to add keys.")
         return
     
     # Pick a random key
@@ -153,10 +153,7 @@ async def key(ctx):
     save_keys(keys)
     
     # Send the key publicly
-    await ctx.send(
-        f"Key: {picked_key}\n"
-        f"Remaining stock: {len(keys)}"
-    )
+    await ctx.send(f"Key: `{picked_key}`")
 
 
 # ---------- CLEARSTOCK COMMAND ----------
