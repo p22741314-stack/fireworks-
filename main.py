@@ -113,6 +113,10 @@ def reset_user_claims(user_id):
         user_data[user_id_str]["last_claim"] = 0
         save_user_data(user_data)
 
+def get_all_user_data():
+    """Get all user data."""
+    return load_user_data()
+
 
 # ---------- Bot Setup ----------
 
@@ -385,6 +389,217 @@ async def gens(ctx):
         f"Status: Ready to claim",
         ephemeral=True
     )
+
+
+# ---------- LOGS COMMAND ----------
+
+@bot.command(name="logs")
+async def logs(ctx):
+    """
+    View detailed logs of all user claims and status.
+    
+    Usage:
+    .logs
+    
+    Admin only.
+    """
+    
+    # Check if user is admin
+    if not ctx.author.guild_permissions.administrator:
+        await ctx.send("You need Administrator permission to use this command.")
+        await delete_command_message(ctx)
+        return
+    
+    # Delete the command message
+    await delete_command_message(ctx)
+    
+    # Get all user data
+    user_data = get_all_user_data()
+    
+    if not user_data:
+        embed = discord.Embed(
+            title="Logs - Key Vault System",
+            description="No user data available yet.",
+            color=discord.Color.gold()
+        )
+        embed.set_footer(text="Key Vault System")
+        embed.timestamp = ctx.message.created_at
+        await ctx.send(embed=embed)
+        return
+    
+    # Separate users into categories
+    active_users = []
+    cooldown_users = []
+    admin_users = []
+    
+    # Get guild members for username resolution
+    guild = ctx.guild
+    
+    for user_id_str, data in user_data.items():
+        user_id = int(user_id_str)
+        claims = data["claims"]
+        last_claim = data["last_claim"]
+        
+        # Check if user is admin
+        member = guild.get_member(user_id)
+        is_admin = False
+        username = f"User {user_id}"
+        
+        if member:
+            username = member.display_name
+            is_admin = member.guild_permissions.administrator
+        
+        # Calculate cooldown status
+        if claims >= MAX_CLAIMS:
+            time_since_last = time.time() - last_claim
+            if time_since_last < COOLDOWN_SECONDS:
+                remaining = int(COOLDOWN_SECONDS - time_since_last)
+                hours = remaining // 3600
+                minutes = (remaining % 3600) // 60
+                seconds = remaining % 60
+                cooldown_status = f"{hours}h {minutes}m {seconds}s"
+                cooldown_users.append({
+                    "id": user_id,
+                    "name": username,
+                    "claims": claims,
+                    "cooldown": cooldown_status,
+                    "is_admin": is_admin
+                })
+                continue
+        
+        # Active users (can claim)
+        if claims > 0 or is_admin:
+            active_users.append({
+                "id": user_id,
+                "name": username,
+                "claims": claims,
+                "max_claims": MAX_CLAIMS if not is_admin else "Unlimited",
+                "remaining": MAX_CLAIMS - claims if not is_admin else "Unlimited",
+                "is_admin": is_admin
+            })
+    
+    # Sort users by claims (highest first)
+    active_users.sort(key=lambda x: x["claims"] if isinstance(x["claims"], int) else 999, reverse=True)
+    cooldown_users.sort(key=lambda x: x["claims"], reverse=True)
+    
+    # Create embeds
+    embeds = []
+    
+    # Summary embed
+    summary_embed = discord.Embed(
+        title="Logs - Key Vault System",
+        description="Summary of all user activity",
+        color=discord.Color.blue()
+    )
+    
+    total_users = len(user_data)
+    total_claims = sum(data["claims"] for data in user_data.values())
+    
+    summary_embed.add_field(
+        name="Total Users",
+        value=f"{total_users}",
+        inline=True
+    )
+    summary_embed.add_field(
+        name="Total Claims",
+        value=f"{total_claims}",
+        inline=True
+    )
+    summary_embed.add_field(
+        name="Active Users",
+        value=f"{len(active_users)}",
+        inline=True
+    )
+    summary_embed.add_field(
+        name="Cooldown Users",
+        value=f"{len(cooldown_users)}",
+        inline=True
+    )
+    summary_embed.add_field(
+        name="Stock Available",
+        value=f"{len(load_keys())} keys",
+        inline=True
+    )
+    summary_embed.add_field(
+        name="Max Claims Per User",
+        value=f"{MAX_CLAIMS} per hour",
+        inline=True
+    )
+    
+    summary_embed.set_footer(text="Key Vault System")
+    summary_embed.timestamp = ctx.message.created_at
+    embeds.append(summary_embed)
+    
+    # Active users embed
+    if active_users:
+        active_embed = discord.Embed(
+            title="Active Users",
+            description="Users who have claimed keys and are ready to claim more",
+            color=discord.Color.green()
+        )
+        
+        active_list = ""
+        for user in active_users[:25]:  # Limit to 25 per embed
+            admin_tag = " [Admin]" if user["is_admin"] else ""
+            active_list += f"**{user['name']}**{admin_tag}\n"
+            if user["is_admin"]:
+                active_list += f"  Claims: Unlimited\n\n"
+            else:
+                active_list += f"  Claims: {user['claims']} of {MAX_CLAIMS}\n"
+                active_list += f"  Remaining: {user['remaining']} claims\n\n"
+        
+        if len(active_users) > 25:
+            active_list += f"\n*... and {len(active_users) - 25} more users*"
+        
+        active_embed.description = active_list
+        active_embed.set_footer(text="Key Vault System")
+        active_embed.timestamp = ctx.message.created_at
+        embeds.append(active_embed)
+    else:
+        active_embed = discord.Embed(
+            title="Active Users",
+            description="No active users found.",
+            color=discord.Color.green()
+        )
+        active_embed.set_footer(text="Key Vault System")
+        active_embed.timestamp = ctx.message.created_at
+        embeds.append(active_embed)
+    
+    # Cooldown users embed
+    if cooldown_users:
+        cooldown_embed = discord.Embed(
+            title="Cooldown Users",
+            description="Users currently on cooldown",
+            color=discord.Color.red()
+        )
+        
+        cooldown_list = ""
+        for user in cooldown_users[:25]:  # Limit to 25 per embed
+            admin_tag = " [Admin]" if user["is_admin"] else ""
+            cooldown_list += f"**{user['name']}**{admin_tag}\n"
+            cooldown_list += f"  Claims: {user['claims']} of {MAX_CLAIMS}\n"
+            cooldown_list += f"  Cooldown: {user['cooldown']}\n\n"
+        
+        if len(cooldown_users) > 25:
+            cooldown_list += f"\n*... and {len(cooldown_users) - 25} more users*"
+        
+        cooldown_embed.description = cooldown_list
+        cooldown_embed.set_footer(text="Key Vault System")
+        cooldown_embed.timestamp = ctx.message.created_at
+        embeds.append(cooldown_embed)
+    else:
+        cooldown_embed = discord.Embed(
+            title="Cooldown Users",
+            description="No users currently on cooldown.",
+            color=discord.Color.green()
+        )
+        cooldown_embed.set_footer(text="Key Vault System")
+        cooldown_embed.timestamp = ctx.message.created_at
+        embeds.append(cooldown_embed)
+    
+    # Send all embeds
+    for embed in embeds:
+        await ctx.send(embed=embed)
 
 
 # ---------- RESTOCK COMMAND ----------
