@@ -104,8 +104,9 @@ async def admin_only(ctx):
 # ---------- Key Button View ----------
 
 class KeyButtonView(View):
-    def __init__(self):
+    def __init__(self, stock_count):
         super().__init__(timeout=None)
+        self.stock_count = stock_count
     
     @discord.ui.button(label="Get Key", style=discord.ButtonStyle.primary, custom_id="get_key")
     async def get_key_button(self, interaction: discord.Interaction, button: Button):
@@ -121,7 +122,7 @@ class KeyButtonView(View):
         keys = load_keys()
         
         if not keys:
-            await interaction.response.send_message("The vault is empty. Use `.restock` to add keys.", ephemeral=True)
+            await interaction.response.send_message("The vault is empty. Use .restock to add keys.", ephemeral=True)
             return
         
         # Pick a random key
@@ -145,22 +146,44 @@ class KeyButtonView(View):
         except:
             pass
         
-        # Create embed for the key
+        # Create detailed embed for the key
         embed = discord.Embed(
-            title="🔑 Key Generated",
-            description=f"Here's your key:\n`{picked_key}`",
-            color=discord.Color.green()
+            title="Key Generated",
+            description=f"**Your Key:**\n```\n{picked_key}\n```",
+            color=discord.Color.dark_blue()
         )
-        embed.set_footer(text=f"Remaining stock: {len(keys)} keys")
+        
+        # Add detailed fields
+        embed.add_field(
+            name="Status",
+            value="Key has been claimed successfully.",
+            inline=False
+        )
+        embed.add_field(
+            name="Remaining Stock",
+            value=f"{len(keys)} keys available",
+            inline=True
+        )
+        embed.add_field(
+            name="Claimed By",
+            value=interaction.user.mention,
+            inline=True
+        )
+        
+        # Add timestamp
+        embed.timestamp = interaction.created_at
+        
+        # Add footer
+        embed.set_footer(text="Key Vault System")
         
         # Send the new key with the button again
-        view = KeyButtonView()
+        view = KeyButtonView(len(keys))
         msg = await interaction.channel.send(embed=embed, view=view)
         
         # Store the new message ID
         last_key_message_id = msg.id
         
-        await interaction.response.send_message("Key sent successfully!", ephemeral=True)
+        await interaction.response.send_message("Key claimed successfully!", ephemeral=True)
 
 
 # ---------- SENDKEY COMMAND ----------
@@ -182,19 +205,41 @@ async def sendkey(ctx):
     # Check if there are keys available
     keys = load_keys()
     if not keys:
-        await ctx.send("Cannot send key embed: The vault is empty. Use `.restock` to add keys first.")
+        await ctx.send("Cannot send key embed: The vault is empty. Use .restock to add keys first.")
         return
     
-    # Create embed
+    # Create detailed embed
     embed = discord.Embed(
-        title="🔑 Get Your Key",
-        description="Click the button below to get a key.",
+        title="Key Distribution System",
+        description="Click the button below to claim a key from the vault.",
         color=discord.Color.blue()
     )
-    embed.set_footer(text=f"Stock available: {len(keys)} keys")
+    
+    # Add detailed fields
+    embed.add_field(
+        name="Available Keys",
+        value=f"{len(keys)} keys currently in stock",
+        inline=True
+    )
+    embed.add_field(
+        name="How to Claim",
+        value="Press the 'Get Key' button below to receive a random key.",
+        inline=True
+    )
+    embed.add_field(
+        name="Important Notice",
+        value="Each key can only be claimed once. Keys are distributed randomly.",
+        inline=False
+    )
+    
+    # Add timestamp
+    embed.timestamp = ctx.message.created_at
+    
+    # Add footer
+    embed.set_footer(text="Key Vault System")
     
     # Create view with button
-    view = KeyButtonView()
+    view = KeyButtonView(len(keys))
     
     # Send the embed with button
     await ctx.send(embed=embed, view=view)
@@ -216,7 +261,7 @@ async def restock(ctx):
     
     # Check for attachment first
     if not ctx.message.attachments:
-        await ctx.send("Attach a `.txt` file with the message, one key per line.")
+        await ctx.send("Attach a .txt file with the message, one key per line.")
         await delete_command_message(ctx)
         return
     
@@ -225,7 +270,7 @@ async def restock(ctx):
     filename = attachment.filename
     
     if not filename.lower().endswith(".txt"):
-        await ctx.send("Please attach a plain `.txt` file.")
+        await ctx.send("Please attach a plain .txt file.")
         await delete_command_message(ctx)
         return
     
@@ -259,7 +304,7 @@ async def restock(ctx):
     await delete_command_message(ctx)
     
     await ctx.send(
-        f"Added {len(new_keys)} keys from `{filename}`.\n"
+        f"Added {len(new_keys)} keys from {filename}.\n"
         f"Total in stock: {len(keys)}."
     )
 
