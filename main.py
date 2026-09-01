@@ -57,6 +57,9 @@ bot = commands.Bot(
     intents=intents
 )
 
+# Store the last key message ID to delete it later
+last_key_message_id = None
+
 
 # ---------- Events ----------
 
@@ -171,6 +174,8 @@ async def key(ctx):
     Admin only.
     """
     
+    global last_key_message_id
+    
     keys = load_keys()
     
     if not keys:
@@ -185,11 +190,22 @@ async def key(ctx):
     # Save immediately so the key is removed
     save_keys(keys)
     
+    # Delete the previous key message if it exists
+    if last_key_message_id:
+        try:
+            prev_msg = await ctx.channel.fetch_message(last_key_message_id)
+            await prev_msg.delete()
+        except:
+            pass  # Message might have been deleted already
+    
     # Delete the command message
     await delete_command_message(ctx)
     
-    # Send the key publicly
-    await ctx.send(f"Key: `{picked_key}`")
+    # Send the new key publicly
+    msg = await ctx.send(f"Key: `{picked_key}`")
+    
+    # Store the new message ID
+    last_key_message_id = msg.id
 
 
 # ---------- STOCK COMMAND ----------
@@ -224,7 +240,18 @@ async def clearstock(ctx):
     Admin only.
     """
     
+    global last_key_message_id
+    
     save_keys([])
+    
+    # Delete the previous key message if it exists
+    if last_key_message_id:
+        try:
+            prev_msg = await ctx.channel.fetch_message(last_key_message_id)
+            await prev_msg.delete()
+        except:
+            pass  # Message might have been deleted already
+        last_key_message_id = None
     
     # Delete the command message
     await delete_command_message(ctx)
