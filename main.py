@@ -138,6 +138,96 @@ async def delete_command_message(ctx):
         pass
 
 
+# ---------- Embed Builders ----------
+
+def build_panel_embed(stock_count):
+    """Build the main key distribution panel embed with live stock."""
+    embed = discord.Embed(
+        title="Key Distribution System",
+        description=(
+            "Welcome to the Key Vault. Click the button below to claim "
+            "your key.\n\u200b"
+        ),
+        color=discord.Color.blurple()
+    )
+    embed.add_field(
+        name="Stock Available",
+        value=f"**{stock_count}** keys in vault",
+        inline=True
+    )
+    embed.add_field(
+        name="Claim Limit",
+        value=f"**{MAX_TOTAL_CLAIMS}** key per user",
+        inline=True
+    )
+    embed.add_field(
+        name="Delivery",
+        value="Instant and private",
+        inline=True
+    )
+    embed.add_field(
+        name="How It Works",
+        value=(
+            "1. Press **Get Key** below\n"
+            "2. Receive a random key privately\n"
+            "3. Redeem it wherever you need\n\u200b"
+        ),
+        inline=False
+    )
+    embed.add_field(
+        name="Important",
+        value=(
+            "• Each key can only be claimed **once**\n"
+            "• Keys are distributed **randomly**\n"
+            "• Only **you** can see your key"
+        ),
+        inline=False
+    )
+    embed.set_footer(text="Key Vault System • Good luck!")
+    return embed
+
+
+def build_key_embed(picked_key, stock_remaining, claim_number, max_claims, is_admin):
+    """Build the private key delivery embed."""
+    embed = discord.Embed(
+        title="Key Claimed Successfully!",
+        description=(
+            "Here is your key — copy it with the button below:\n\n"
+            f"`{picked_key}`\n\u200b"
+        ),
+        color=discord.Color.green()
+    )
+    embed.add_field(
+        name="Stock Remaining",
+        value=f"**{stock_remaining}** keys left",
+        inline=True
+    )
+    embed.add_field(
+        name="Your Claims",
+        value=(
+            f"**{claim_number}/{max_claims}** used"
+            if not is_admin
+            else "**Unlimited** (Admin)"
+        ),
+        inline=True
+    )
+    embed.add_field(
+        name="Privacy",
+        value="Only you can see this",
+        inline=True
+    )
+    embed.add_field(
+        name="Tip",
+        value=(
+            "Click the key text above to copy it, or tap and hold "
+            "on mobile to copy."
+        ),
+        inline=False
+    )
+    embed.set_footer(text="Key Vault System • Redeem your key now!")
+    return embed
+
+
 # ---------- Key Button View ----------
 
 class KeyButtonView(View):
@@ -166,7 +256,8 @@ class KeyButtonView(View):
             user_info = get_user_info(user_id)
             if user_info["claims"] >= MAX_TOTAL_CLAIMS:
                 await interaction.response.send_message(
-                    "You have already claimed your key. Each user can only claim **one** key.",
+                    "You have already claimed your key.\n"
+                    "Each user can only claim **one** key.",
                     ephemeral=True
                 )
                 return
@@ -179,16 +270,29 @@ class KeyButtonView(View):
         # Track claim (skip for admins)
         if not is_admin:
             update_user_claims(user_id)
+            user_info = get_user_info(user_id)
+            claim_number = user_info["claims"]
+        else:
+            claim_number = "∞"
         
-        # Simple, clean embed with inline code key
-        embed = discord.Embed(
-            title="Your Key",
-            description=f"`{picked_key}`",
-            color=discord.Color.blurple()
+        # Build the private key embed
+        key_embed = build_key_embed(
+            picked_key=picked_key,
+            stock_remaining=len(keys),
+            claim_number=claim_number,
+            max_claims=MAX_TOTAL_CLAIMS,
+            is_admin=is_admin
         )
-        embed.set_footer(text=f"Stock remaining: {len(keys)}")
         
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+        await interaction.response.send_message(embed=key_embed, ephemeral=True)
+        
+        # ---- Auto-update the panel embed's stock count ----
+        try:
+            if interaction.message and interaction.message.author.id == bot.user.id:
+                updated_panel = build_panel_embed(len(keys))
+                await interaction.message.edit(embed=updated_panel, view=self)
+        except discord.HTTPException:
+            pass  # Ignore edit failures (e.g., message deleted)
 
 
 # ---------- SENDKEY COMMAND ----------
@@ -212,13 +316,7 @@ async def sendkey(ctx):
         await ctx.send("Cannot send key embed: The vault is empty. Use `.restock` first.")
         return
     
-    embed = discord.Embed(
-        title="Key Distribution",
-        description="Click the button below to claim your key.",
-        color=discord.Color.blurple()
-    )
-    embed.set_footer(text=f"Stock: {len(keys)}")
-    
+    embed = build_panel_embed(len(keys))
     view = KeyButtonView()
     await ctx.send(embed=embed, view=view)
 
@@ -244,9 +342,17 @@ async def gens(ctx):
     claims = user_info["claims"]
     
     if claims >= MAX_TOTAL_CLAIMS:
-        await ctx.send("You've already claimed your key.", ephemeral=True)
+        await ctx.send(
+            "You've already claimed your key.\n"
+            f"Claims used: **{claims}/{MAX_TOTAL_CLAIMS}**",
+            ephemeral=True
+        )
     else:
-        await ctx.send("You have **1** claim available.", ephemeral=True)
+        await ctx.send(
+            "You have **1** claim available.\n"
+            "Click the **Get Key** button to claim it!",
+            ephemeral=True
+        )
 
 
 # ---------- LOGS COMMAND ----------
@@ -293,11 +399,12 @@ async def logs(ctx):
     
     embed = discord.Embed(
         title="Key Logs",
+        description="Overview of all claim activity.\n\u200b",
         color=discord.Color.blurple()
     )
-    embed.add_field(name="Total Claims", value=str(total_claims), inline=True)
-    embed.add_field(name="Stock", value=str(len(load_keys())), inline=True)
-    embed.add_field(name="Users", value=str(len(user_data)), inline=True)
+    embed.add_field(name="Stock", value=f"**{len(load_keys())}** keys", inline=True)
+    embed.add_field(name="Total Claims", value=f"**{total_claims}**", inline=True)
+    embed.add_field(name="Users", value=f"**{len(user_data)}**", inline=True)
     
     if claimed_users:
         lines = [f"**{name}** — {count}" for name, count in claimed_users[:15]]
@@ -305,6 +412,7 @@ async def logs(ctx):
             lines.append(f"*...and {len(claimed_users) - 15} more*")
         embed.add_field(name="Claimed By", value="\n".join(lines), inline=False)
     
+    embed.set_footer(text="Key Vault System")
     await ctx.send(embed=embed)
 
 
