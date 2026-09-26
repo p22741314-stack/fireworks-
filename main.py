@@ -180,10 +180,10 @@ class KeyButtonView(View):
         if not is_admin:
             update_user_claims(user_id)
         
-        # Simple, clean embed
+        # Simple, clean embed with inline code key
         embed = discord.Embed(
             title="Your Key",
-            description=f"```{picked_key}```",
+            description=f"`{picked_key}`",
             color=discord.Color.blurple()
         )
         embed.set_footer(text=f"Stock remaining: {len(keys)}")
