@@ -16,9 +16,7 @@ from flask import Flask
 DATA_FILE = "keys.json"
 BLACKLIST_FILE = "blacklist.json"
 PREFIX = "."
-MAX_CLAIMS = 3
-COOLDOWN_HOURS = 1
-COOLDOWN_SECONDS = COOLDOWN_HOURS * 60 * 60  # 3600 seconds
+MAX_TOTAL_CLAIMS = 1  # Each user can only ever claim ONE key
 
 
 # ---------- Render Web Server ----------
@@ -103,23 +101,9 @@ def update_user_claims(user_id):
     
     return user_data[user_id_str]
 
-def reset_user_claims(user_id):
-    """Reset user's claims to 0."""
-    user_data = load_user_data()
-    user_id_str = str(user_id)
-    
-    if user_id_str in user_data:
-        user_data[user_id_str]["claims"] = 0
-        user_data[user_id_str]["last_claim"] = 0
-        save_user_data(user_data)
-
 def get_all_user_data():
     """Get all user data."""
     return load_user_data()
-
-def clear_all_user_data():
-    """Clear all user data."""
-    save_user_data({})
 
 
 # ---------- Helper to get display name ----------
@@ -170,50 +154,36 @@ async def delete_command_message(ctx):
 # ---------- Key Button View ----------
 
 class KeyButtonView(View):
-    def __init__(self, stock_count, sendkey_message=None):
+    def __init__(self, stock_count):
         super().__init__(timeout=None)
         self.stock_count = stock_count
-        self.sendkey_message = sendkey_message
     
     @discord.ui.button(label="Get Key", style=discord.ButtonStyle.primary, custom_id="get_key")
     async def get_key_button(self, interaction: discord.Interaction, button: Button):
         """Handle the Get Key button press."""
         
         user_id = interaction.user.id
-        is_admin = interaction.user.guild_permissions.administrator
         
         # Load keys
         keys = load_keys()
         
         if not keys:
-            await interaction.response.send_message("The vault is empty. Please wait for a restock.", ephemeral=True)
+            await interaction.response.send_message(
+                "The vault is empty. Please wait for a restock.",
+                ephemeral=True
+            )
             return
         
-        # Check user's claim status (skip for admins)
-        if not is_admin:
-            user_info = get_user_info(user_id)
-            claims = user_info["claims"]
-            last_claim = user_info["last_claim"]
-            
-            # Check if user has reached max claims
-            if claims >= MAX_CLAIMS:
-                # Check if cooldown has passed
-                time_since_last = time.time() - last_claim
-                if time_since_last < COOLDOWN_SECONDS:
-                    remaining = int(COOLDOWN_SECONDS - time_since_last)
-                    hours = remaining // 3600
-                    minutes = (remaining % 3600) // 60
-                    seconds = remaining % 60
-                    
-                    await interaction.response.send_message(
-                        f"You have reached the maximum of {MAX_CLAIMS} claims. "
-                        f"Cooldown remaining: {hours}h {minutes}m {seconds}s",
-                        ephemeral=True
-                    )
-                    return
-                else:
-                    # Cooldown passed, reset claims
-                    reset_user_claims(user_id)
+        # Check if user has already claimed their one key
+        user_info = get_user_info(user_id)
+        claims = user_info["claims"]
+        
+        if claims >= MAX_TOTAL_CLAIMS:
+            await interaction.response.send_message(
+                "You have already claimed your key. Each user can only claim **one** key.",
+                ephemeral=True
+            )
+            return
         
         # Pick a random key
         index = random.randrange(len(keys))
@@ -222,49 +192,9 @@ class KeyButtonView(View):
         # Save immediately so the key is removed
         save_keys(keys)
         
-        # Update user claims (skip for admins)
-        if not is_admin:
-            update_user_claims(user_id)
-            user_info = get_user_info(user_id)
-            claims_remaining = MAX_CLAIMS - user_info["claims"]
-        else:
-            claims_remaining = "Unlimited (Admin)"
-        
-        # Update the sendkey embed with new stock count
-        if self.sendkey_message:
-            try:
-                # Get current embed
-                old_embed = self.sendkey_message.embeds[0]
-                
-                # Create updated embed
-                new_embed = discord.Embed(
-                    title=old_embed.title,
-                    description=old_embed.description,
-                    color=old_embed.color
-                )
-                
-                # Update fields with new stock count
-                for field in old_embed.fields:
-                    if field.name == "Available Keys":
-                        new_embed.add_field(
-                            name=field.name,
-                            value=f"{len(keys)} keys currently in stock",
-                            inline=field.inline
-                        )
-                    else:
-                        new_embed.add_field(
-                            name=field.name,
-                            value=field.value,
-                            inline=field.inline
-                        )
-                
-                new_embed.timestamp = old_embed.timestamp
-                new_embed.set_footer(text=old_embed.footer.text)
-                
-                # Edit the sendkey message
-                await self.sendkey_message.edit(embed=new_embed)
-            except:
-                pass
+        # Update user claim count
+        update_user_claims(user_id)
+        user_info = get_user_info(user_id)
         
         # Create detailed embed for the key (ephemeral - only visible to the user)
         embed = discord.Embed(
@@ -273,7 +203,6 @@ class KeyButtonView(View):
             color=discord.Color.dark_blue()
         )
         
-        # Add detailed fields
         embed.add_field(
             name="Status",
             value="Key has been claimed successfully.",
@@ -289,33 +218,15 @@ class KeyButtonView(View):
             value=interaction.user.mention,
             inline=True
         )
+        embed.add_field(
+            name="Claim Limit",
+            value="You have now used your **1** allowed claim.",
+            inline=False
+        )
         
-        # Add claims info (skip for admins)
-        if not is_admin:
-            embed.add_field(
-                name="Your Claims",
-                value=f"{user_info['claims']} of {MAX_CLAIMS} used",
-                inline=True
-            )
-            embed.add_field(
-                name="Claims Remaining",
-                value=f"{claims_remaining} claims left",
-                inline=True
-            )
-        else:
-            embed.add_field(
-                name="Admin Status",
-                value="Unlimited claims (Admin)",
-                inline=True
-            )
-        
-        # Add timestamp
         embed.timestamp = interaction.created_at
-        
-        # Add footer
         embed.set_footer(text="Key Vault System")
         
-        # Send the key as ephemeral (only visible to the user who clicked)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
@@ -332,29 +243,24 @@ async def sendkey(ctx):
     Admin only.
     """
     
-    # Check if user is admin
     if not ctx.author.guild_permissions.administrator:
         await ctx.send("You need Administrator permission to use this command.")
         await delete_command_message(ctx)
         return
     
-    # Delete the command message
     await delete_command_message(ctx)
     
-    # Check if there are keys available
     keys = load_keys()
     if not keys:
         await ctx.send("Cannot send key embed: The vault is empty. Use .restock to add keys first.")
         return
     
-    # Create detailed embed
     embed = discord.Embed(
         title="Key Distribution System",
         description="Click the button below to claim a key from the vault.",
         color=discord.Color.blue()
     )
     
-    # Add detailed fields
     embed.add_field(
         name="Available Keys",
         value=f"{len(keys)} keys currently in stock",
@@ -366,8 +272,8 @@ async def sendkey(ctx):
         inline=True
     )
     embed.add_field(
-        name="Claim Limits",
-        value=f"Each user can claim up to {MAX_CLAIMS} keys per hour.",
+        name="Claim Limit",
+        value="Each user can only claim **1 key total**.",
         inline=False
     )
     embed.add_field(
@@ -376,20 +282,11 @@ async def sendkey(ctx):
         inline=False
     )
     
-    # Add timestamp
     embed.timestamp = ctx.message.created_at
-    
-    # Add footer
     embed.set_footer(text="Key Vault System")
     
-    # Create view with button and pass the message reference
     view = KeyButtonView(len(keys))
-    
-    # Send the embed with button
-    message = await ctx.send(embed=embed, view=view)
-    
-    # Update the view with the message reference
-    view.sendkey_message = message
+    await ctx.send(embed=embed, view=view)
 
 
 # ---------- GENS COMMAND ----------
@@ -397,56 +294,30 @@ async def sendkey(ctx):
 @bot.command(name="gens")
 async def gens(ctx):
     """
-    Check how many keys you have claimed and how many are remaining.
+    Check whether you have already claimed your key.
     
     Usage:
     .gens
     """
     
-    # Delete the command message
     await delete_command_message(ctx)
     
     user_id = ctx.author.id
-    is_admin = ctx.author.guild_permissions.administrator
-    
-    if is_admin:
-        await ctx.send("You are an admin. You have unlimited claims.", ephemeral=True)
-        return
-    
     user_info = get_user_info(user_id)
     claims = user_info["claims"]
-    last_claim = user_info["last_claim"]
     
-    # Calculate remaining claims
-    if claims >= MAX_CLAIMS:
-        # Check if cooldown has passed
-        time_since_last = time.time() - last_claim
-        if time_since_last < COOLDOWN_SECONDS:
-            remaining_time = int(COOLDOWN_SECONDS - time_since_last)
-            hours = remaining_time // 3600
-            minutes = (remaining_time % 3600) // 60
-            seconds = remaining_time % 60
-            
-            await ctx.send(
-                f"Your Claims: {claims} of {MAX_CLAIMS} used\n"
-                f"Status: Cooldown active\n"
-                f"Time remaining: {hours}h {minutes}m {seconds}s",
-                ephemeral=True
-            )
-            return
-        else:
-            # Cooldown passed, reset claims
-            reset_user_claims(user_id)
-            claims = 0
-    
-    claims_remaining = MAX_CLAIMS - claims
-    
-    await ctx.send(
-        f"Your Claims: {claims} of {MAX_CLAIMS} used\n"
-        f"Claims Remaining: {claims_remaining}\n"
-        f"Status: Ready to claim",
-        ephemeral=True
-    )
+    if claims >= MAX_TOTAL_CLAIMS:
+        await ctx.send(
+            "You have already claimed your key.\n"
+            "Each user can only claim **1** key.",
+            ephemeral=True
+        )
+    else:
+        await ctx.send(
+            "You have not claimed a key yet.\n"
+            "You have **1** claim available.",
+            ephemeral=True
+        )
 
 
 # ---------- LOGS COMMAND ----------
@@ -462,16 +333,13 @@ async def logs(ctx):
     Admin only.
     """
     
-    # Check if user is admin
     if not ctx.author.guild_permissions.administrator:
         await ctx.send("You need Administrator permission to use this command.")
         await delete_command_message(ctx)
         return
     
-    # Delete the command message
     await delete_command_message(ctx)
     
-    # Get all user data
     user_data = get_all_user_data()
     
     if not user_data:
@@ -485,19 +353,15 @@ async def logs(ctx):
         await ctx.send(embed=embed)
         return
     
-    # Separate users into categories
-    active_users = []
-    cooldown_users = []
+    claimed_users = []
+    unclaimed_users = []
     
-    # Get guild for member info
     guild = ctx.guild
     
     for user_id_str, data in user_data.items():
         user_id = int(user_id_str)
         claims = data["claims"]
-        last_claim = data["last_claim"]
         
-        # Get user display name
         try:
             member = await guild.fetch_member(user_id)
             if member:
@@ -510,40 +374,21 @@ async def logs(ctx):
             username = f"Unknown User ({user_id})"
             is_admin = False
         
-        # Calculate cooldown status
-        if claims >= MAX_CLAIMS and not is_admin:
-            time_since_last = time.time() - last_claim
-            if time_since_last < COOLDOWN_SECONDS:
-                remaining = int(COOLDOWN_SECONDS - time_since_last)
-                hours = remaining // 3600
-                minutes = (remaining % 3600) // 60
-                seconds = remaining % 60
-                cooldown_status = f"{hours}h {minutes}m {seconds}s"
-                cooldown_users.append({
-                    "id": user_id,
-                    "name": username,
-                    "claims": claims,
-                    "cooldown": cooldown_status,
-                    "is_admin": is_admin
-                })
-                continue
+        entry = {
+            "id": user_id,
+            "name": username,
+            "claims": claims,
+            "is_admin": is_admin
+        }
         
-        # Active users (can claim or admins)
-        if claims > 0 or is_admin:
-            active_users.append({
-                "id": user_id,
-                "name": username,
-                "claims": claims,
-                "max_claims": MAX_CLAIMS if not is_admin else "Unlimited",
-                "remaining": MAX_CLAIMS - claims if not is_admin else "Unlimited",
-                "is_admin": is_admin
-            })
+        if claims >= MAX_TOTAL_CLAIMS:
+            claimed_users.append(entry)
+        elif claims > 0:
+            unclaimed_users.append(entry)
     
-    # Sort users by claims (highest first)
-    active_users.sort(key=lambda x: x["claims"] if isinstance(x["claims"], int) else 999, reverse=True)
-    cooldown_users.sort(key=lambda x: x["claims"], reverse=True)
+    claimed_users.sort(key=lambda x: x["claims"], reverse=True)
+    unclaimed_users.sort(key=lambda x: x["claims"], reverse=True)
     
-    # Create embeds
     embeds = []
     
     # Summary embed
@@ -556,148 +401,69 @@ async def logs(ctx):
     total_users = len(user_data)
     total_claims = sum(data["claims"] for data in user_data.values())
     
-    summary_embed.add_field(
-        name="Total Users",
-        value=f"{total_users}",
-        inline=True
-    )
-    summary_embed.add_field(
-        name="Total Claims",
-        value=f"{total_claims}",
-        inline=True
-    )
-    summary_embed.add_field(
-        name="Active Users",
-        value=f"{len(active_users)}",
-        inline=True
-    )
-    summary_embed.add_field(
-        name="Cooldown Users",
-        value=f"{len(cooldown_users)}",
-        inline=True
-    )
-    summary_embed.add_field(
-        name="Stock Available",
-        value=f"{len(load_keys())} keys",
-        inline=True
-    )
-    summary_embed.add_field(
-        name="Max Claims Per User",
-        value=f"{MAX_CLAIMS} per hour",
-        inline=True
-    )
-    
+    summary_embed.add_field(name="Total Users", value=f"{total_users}", inline=True)
+    summary_embed.add_field(name="Total Claims", value=f"{total_claims}", inline=True)
+    summary_embed.add_field(name="Users Who Claimed", value=f"{len(claimed_users)}", inline=True)
+    summary_embed.add_field(name="Stock Available", value=f"{len(load_keys())} keys", inline=True)
+    summary_embed.add_field(name="Max Claims Per User", value=f"{MAX_TOTAL_CLAIMS} (one-time)", inline=True)
     summary_embed.set_footer(text="Key Vault System")
     summary_embed.timestamp = ctx.message.created_at
     embeds.append(summary_embed)
     
-    # Active users embed
-    if active_users:
-        active_embed = discord.Embed(
-            title="Active Users",
-            description="Users who have claimed keys and are ready to claim more",
-            color=discord.Color.green()
-        )
-        
-        active_list = ""
-        for user in active_users[:25]:  # Limit to 25 per embed
-            admin_tag = " [Admin]" if user["is_admin"] else ""
-            active_list += f"**{user['name']}**{admin_tag}\n"
-            if user["is_admin"]:
-                active_list += f"  Claims: Unlimited\n\n"
-            else:
-                active_list += f"  Claims: {user['claims']} of {MAX_CLAIMS}\n"
-                active_list += f"  Remaining: {user['remaining']} claims\n\n"
-        
-        if len(active_users) > 25:
-            active_list += f"\n*... and {len(active_users) - 25} more users*"
-        
-        active_embed.description = active_list
-        active_embed.set_footer(text="Key Vault System")
-        active_embed.timestamp = ctx.message.created_at
-        embeds.append(active_embed)
-    else:
-        active_embed = discord.Embed(
-            title="Active Users",
-            description="No active users found.",
-            color=discord.Color.green()
-        )
-        active_embed.set_footer(text="Key Vault System")
-        active_embed.timestamp = ctx.message.created_at
-        embeds.append(active_embed)
-    
-    # Cooldown users embed
-    if cooldown_users:
-        cooldown_embed = discord.Embed(
-            title="Cooldown Users",
-            description="Users currently on cooldown",
+    # Claimed users embed
+    if claimed_users:
+        claimed_embed = discord.Embed(
+            title="Users Who Have Claimed",
+            description="These users have used their one allowed claim.",
             color=discord.Color.red()
         )
         
-        cooldown_list = ""
-        for user in cooldown_users[:25]:  # Limit to 25 per embed
+        claimed_list = ""
+        for user in claimed_users[:25]:
             admin_tag = " [Admin]" if user["is_admin"] else ""
-            cooldown_list += f"**{user['name']}**{admin_tag}\n"
-            cooldown_list += f"  Claims: {user['claims']} of {MAX_CLAIMS}\n"
-            cooldown_list += f"  Cooldown: {user['cooldown']}\n\n"
+            claimed_list += f"**{user['name']}**{admin_tag}\n"
+            claimed_list += f"  Claims: {user['claims']}\n\n"
         
-        if len(cooldown_users) > 25:
-            cooldown_list += f"\n*... and {len(cooldown_users) - 25} more users*"
+        if len(claimed_users) > 25:
+            claimed_list += f"\n*... and {len(claimed_users) - 25} more users*"
         
-        cooldown_embed.description = cooldown_list
-        cooldown_embed.set_footer(text="Key Vault System")
-        cooldown_embed.timestamp = ctx.message.created_at
-        embeds.append(cooldown_embed)
+        claimed_embed.description = claimed_list
+        claimed_embed.set_footer(text="Key Vault System")
+        claimed_embed.timestamp = ctx.message.created_at
+        embeds.append(claimed_embed)
     else:
-        cooldown_embed = discord.Embed(
-            title="Cooldown Users",
-            description="No users currently on cooldown.",
+        claimed_embed = discord.Embed(
+            title="Users Who Have Claimed",
+            description="No users have claimed a key yet.",
             color=discord.Color.green()
         )
-        cooldown_embed.set_footer(text="Key Vault System")
-        cooldown_embed.timestamp = ctx.message.created_at
-        embeds.append(cooldown_embed)
+        claimed_embed.set_footer(text="Key Vault System")
+        claimed_embed.timestamp = ctx.message.created_at
+        embeds.append(claimed_embed)
     
-    # Send all embeds
+    # Unclaimed users embed
+    if unclaimed_users:
+        unclaimed_embed = discord.Embed(
+            title="Partial Claim Records",
+            description="Users with an unexpected partial claim count.",
+            color=discord.Color.gold()
+        )
+        
+        unclaimed_list = ""
+        for user in unclaimed_users[:25]:
+            unclaimed_list += f"**{user['name']}**\n"
+            unclaimed_list += f"  Claims: {user['claims']}\n\n"
+        
+        if len(unclaimed_users) > 25:
+            unclaimed_list += f"\n*... and {len(unclaimed_users) - 25} more users*"
+        
+        unclaimed_embed.description = unclaimed_list
+        unclaimed_embed.set_footer(text="Key Vault System")
+        unclaimed_embed.timestamp = ctx.message.created_at
+        embeds.append(unclaimed_embed)
+    
     for embed in embeds:
         await ctx.send(embed=embed)
-
-
-# ---------- CLOGS COMMAND ----------
-
-@bot.command(name="clogs")
-async def clogs(ctx):
-    """
-    Clear all logs (user claim data).
-    
-    Usage:
-    .clogs
-    
-    Admin only.
-    """
-    
-    # Check if user is admin
-    if not ctx.author.guild_permissions.administrator:
-        await ctx.send("You need Administrator permission to use this command.")
-        await delete_command_message(ctx)
-        return
-    
-    # Delete the command message
-    await delete_command_message(ctx)
-    
-    # Get current user count before clearing
-    user_data = get_all_user_data()
-    count = len(user_data)
-    
-    if count == 0:
-        await ctx.send("No logs to clear. User data is already empty.")
-        return
-    
-    # Clear all user data
-    clear_all_user_data()
-    
-    # Send confirmation
-    await ctx.send(f"All logs have been cleared. {count} user records removed.")
 
 
 # ---------- RESTOCK COMMAND ----------
@@ -714,19 +480,16 @@ async def restock(ctx):
     Admin only.
     """
     
-    # Check if user is admin
     if not ctx.author.guild_permissions.administrator:
         await ctx.send("You need Administrator permission to use this command.")
         await delete_command_message(ctx)
         return
     
-    # Check for attachment first
     if not ctx.message.attachments:
         await ctx.send("Attach a `.txt` file with the message, one key per line.")
         await delete_command_message(ctx)
         return
     
-    # Get attachment info
     attachment = ctx.message.attachments[0]
     filename = attachment.filename
     
@@ -735,7 +498,6 @@ async def restock(ctx):
         await delete_command_message(ctx)
         return
     
-    # Read the file
     raw_bytes = await attachment.read()
     
     try:
@@ -756,12 +518,10 @@ async def restock(ctx):
         await delete_command_message(ctx)
         return
     
-    # Add keys to stock
     keys = load_keys()
     keys.extend(new_keys)
     save_keys(keys)
     
-    # Delete the command message after successful restock
     await delete_command_message(ctx)
     
     await ctx.send(
@@ -782,7 +542,6 @@ async def stock(ctx):
     Admin only.
     """
     
-    # Check if user is admin
     if not ctx.author.guild_permissions.administrator:
         await ctx.send("You need Administrator permission to use this command.")
         await delete_command_message(ctx)
@@ -791,10 +550,7 @@ async def stock(ctx):
     keys = load_keys()
     count = len(keys)
     
-    # Delete the command message
     await delete_command_message(ctx)
-    
-    # Send stock count
     await ctx.send(f"{count} keys in vault")
 
 
@@ -808,18 +564,49 @@ async def clearstock(ctx):
     Admin only.
     """
     
-    # Check if user is admin
     if not ctx.author.guild_permissions.administrator:
         await ctx.send("You need Administrator permission to use this command.")
         await delete_command_message(ctx)
         return
     
     save_keys([])
-    
-    # Delete the command message
     await delete_command_message(ctx)
-    
     await ctx.send("Stock has been cleared.")
+
+
+# ---------- RESETUSER COMMAND (bonus, useful for testing) ----------
+
+@bot.command(name="resetuser")
+async def resetuser(ctx, member: discord.Member = None):
+    """
+    Reset a user's claim so they can claim again.
+    
+    Usage:
+    .resetuser @user
+    
+    Admin only.
+    """
+    
+    if not ctx.author.guild_permissions.administrator:
+        await ctx.send("You need Administrator permission to use this command.")
+        await delete_command_message(ctx)
+        return
+    
+    if member is None:
+        await ctx.send("Please mention a user: `.resetuser @user`")
+        await delete_command_message(ctx)
+        return
+    
+    user_data = load_user_data()
+    user_id_str = str(member.id)
+    
+    if user_id_str in user_data:
+        user_data[user_id_str]["claims"] = 0
+        user_data[user_id_str]["last_claim"] = 0
+        save_user_data(user_data)
+    
+    await delete_command_message(ctx)
+    await ctx.send(f"Reset claim data for {member.mention}.")
 
 
 # ---------- Error Handling ----------
@@ -827,10 +614,8 @@ async def clearstock(ctx):
 @bot.event
 async def on_command_error(ctx, error):
     if isinstance(error, commands.CheckFailure):
-        # Already handled by the global check
         pass
     elif isinstance(error, commands.CommandNotFound):
-        # Ignore unknown commands
         pass
     else:
         await ctx.send(f"Error: {error}")
@@ -842,7 +627,6 @@ if __name__ == "__main__":
     
     token = os.environ.get("DISCORD_TOKEN")
     
-    # Optional local token.txt support
     if not token and os.path.exists("token.txt"):
         with open("token.txt", "r", encoding="utf-8") as f:
             token = f.read().strip()
