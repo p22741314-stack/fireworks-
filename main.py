@@ -22,6 +22,16 @@ if not TOKEN:
 PREFIX = "."
 DATA_FILE = "robux_users.json"
 
+# Default payout
+MIN_PAYOUT = 100
+MAX_PAYOUT = 5000
+
+# Put your Discord user ID here
+ADMIN_IDS = {
+    123456789012345678
+}
+
+
 # =========================
 # DATA
 # =========================
@@ -85,9 +95,10 @@ async def on_ready():
 async def robux(ctx):
     user = get_user(ctx.author.id)
 
-    amount = random.randint(100, 5000)
+    amount = random.randint(MIN_PAYOUT, MAX_PAYOUT)
 
     user["robux"] += amount
+
     save_data()
 
     await ctx.send(
@@ -104,15 +115,11 @@ async def robux(ctx):
 async def gamble(ctx, amount: int = None):
 
     if amount is None:
-        await ctx.send(
-            "Usage: .gamble <amount>"
-        )
+        await ctx.send("Usage: .gamble <amount>")
         return
 
     if amount <= 0:
-        await ctx.send(
-            "The amount must be greater than 0."
-        )
+        await ctx.send("The amount must be greater than 0.")
         return
 
     user = get_user(ctx.author.id)
@@ -146,16 +153,67 @@ async def gamble(ctx, amount: int = None):
 
 
 # =========================
+# ADMIN: CHANGE PAYOUT
+# =========================
+
+@bot.command(name="setpayout")
+async def setpayout(ctx, minimum: int = None, maximum: int = None):
+
+    if ctx.author.id not in ADMIN_IDS:
+        await ctx.send("You do not have permission to use this command.")
+        return
+
+    if minimum is None or maximum is None:
+        await ctx.send(
+            "Usage: .setpayout <minimum> <maximum>"
+        )
+        return
+
+    if minimum < 0 or maximum < 0:
+        await ctx.send(
+            "Payout amounts cannot be negative."
+        )
+        return
+
+    if minimum > maximum:
+        await ctx.send(
+            "The minimum payout cannot be greater than the maximum payout."
+        )
+        return
+
+    global MIN_PAYOUT
+    global MAX_PAYOUT
+
+    MIN_PAYOUT = minimum
+    MAX_PAYOUT = maximum
+
+    await ctx.send(
+        f"Robux payout changed.\n"
+        f"Minimum: {MIN_PAYOUT:,} Robux\n"
+        f"Maximum: {MAX_PAYOUT:,} Robux"
+    )
+
+
+# =========================
 # HELP
 # =========================
 
 @bot.command(name="help")
 async def help_command(ctx):
-    await ctx.send(
-        "Robux Simulator Commands:\n\n"
-        ".robux - Earn random Robux\n"
-        ".gamble <amount> - Gamble your Robux"
-    )
+
+    if ctx.author.id in ADMIN_IDS:
+        await ctx.send(
+            "Robux Simulator Commands:\n\n"
+            ".robux - Earn random Robux\n"
+            ".gamble <amount> - Gamble your Robux\n"
+            ".setpayout <minimum> <maximum> - Change the Robux payout"
+        )
+    else:
+        await ctx.send(
+            "Robux Simulator Commands:\n\n"
+            ".robux - Earn random Robux\n"
+            ".gamble <amount> - Gamble your Robux"
+        )
 
 
 # =========================
