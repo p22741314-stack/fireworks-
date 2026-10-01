@@ -6,6 +6,7 @@ import os
 from flask import Flask
 from threading import Thread
 
+
 # =========================
 # SETTINGS
 # =========================
@@ -28,19 +29,16 @@ MAX_PAYOUT = 5000
 
 ADMIN_USERNAME = "w38r"
 
-# Put the Discord User ID of w38r into Render:
-# W38R_USER_ID=123456789012345678
+# Set this in Render:
+# W38R_USER_ID=YOUR_DISCORD_USER_ID
 try:
     ADMIN_USER_ID = int(os.getenv("W38R_USER_ID", "0"))
 except ValueError:
     ADMIN_USER_ID = 0
 
-HR_KEY_PRICE = 1000
-HR_KEY_STOCK = 0
-
 
 # =========================
-# DATA
+# LOAD DATA
 # =========================
 
 def load_data():
@@ -48,8 +46,6 @@ def load_data():
         return {
             "users": {},
             "settings": {
-                "hr_key_price": 1000,
-                "hr_key_stock": 0,
                 "min_payout": 100,
                 "max_payout": 5000
             }
@@ -65,12 +61,6 @@ def load_data():
         if "settings" not in data:
             data["settings"] = {}
 
-        if "hr_key_price" not in data["settings"]:
-            data["settings"]["hr_key_price"] = 1000
-
-        if "hr_key_stock" not in data["settings"]:
-            data["settings"]["hr_key_stock"] = 0
-
         if "min_payout" not in data["settings"]:
             data["settings"]["min_payout"] = 100
 
@@ -83,8 +73,6 @@ def load_data():
         return {
             "users": {},
             "settings": {
-                "hr_key_price": 1000,
-                "hr_key_stock": 0,
                 "min_payout": 100,
                 "max_payout": 5000
             }
@@ -95,19 +83,18 @@ data = load_data()
 
 users = data["users"]
 
-HR_KEY_PRICE = data["settings"]["hr_key_price"]
-HR_KEY_STOCK = data["settings"]["hr_key_stock"]
-
 MIN_PAYOUT = data["settings"]["min_payout"]
 MAX_PAYOUT = data["settings"]["max_payout"]
 
+
+# =========================
+# SAVE DATA
+# =========================
 
 def save_data():
     data = {
         "users": users,
         "settings": {
-            "hr_key_price": HR_KEY_PRICE,
-            "hr_key_stock": HR_KEY_STOCK,
             "min_payout": MIN_PAYOUT,
             "max_payout": MAX_PAYOUT
         }
@@ -117,21 +104,21 @@ def save_data():
         json.dump(data, f, indent=4)
 
 
+# =========================
+# USER DATA
+# =========================
+
 def get_user(user_id):
     user_id = str(user_id)
 
     if user_id not in users:
         users[user_id] = {
-            "robux": 0,
-            "hr_keys": 0
+            "robux": 0
         }
         save_data()
 
     if "robux" not in users[user_id]:
         users[user_id]["robux"] = 0
-
-    if "hr_keys" not in users[user_id]:
-        users[user_id]["hr_keys"] = 0
 
     return users[user_id]
 
@@ -162,7 +149,7 @@ bot = commands.Bot(
 
 
 # =========================
-# READY
+# BOT READY
 # =========================
 
 @bot.event
@@ -173,7 +160,7 @@ async def on_ready():
     if ADMIN_USER_ID == 0:
         print("WARNING: W38R_USER_ID is not configured.")
     else:
-        print(f"Bank account configured for Discord ID: {ADMIN_USER_ID}")
+        print("w38r bank account is configured.")
 
 
 # =========================
@@ -182,6 +169,7 @@ async def on_ready():
 
 @bot.command(name="robux")
 async def robux(ctx):
+
     user = get_user(ctx.author.id)
 
     amount = random.randint(
@@ -200,6 +188,20 @@ async def robux(ctx):
 
 
 # =========================
+# BALANCE
+# =========================
+
+@bot.command(name="balance", aliases=["bal"])
+async def balance(ctx):
+
+    user = get_user(ctx.author.id)
+
+    await ctx.send(
+        f"Your balance is {user['robux']:,} Robux."
+    )
+
+
+# =========================
 # GAMBLE
 # =========================
 
@@ -207,7 +209,9 @@ async def robux(ctx):
 async def gamble(ctx, amount: int = None):
 
     if amount is None:
-        await ctx.send("Usage: .gamble <amount>")
+        await ctx.send(
+            "Usage: .gamble <amount>"
+        )
         return
 
     if amount <= 0:
@@ -229,7 +233,7 @@ async def gamble(ctx, amount: int = None):
 
     if bank is None:
         await ctx.send(
-            "The w38r bank account has not been configured."
+            "The w38r bank has not been configured."
         )
         return
 
@@ -240,9 +244,6 @@ async def gamble(ctx, amount: int = None):
     # =========================
 
     if won:
-
-        # The bank must have enough money
-        # to pay the player.
 
         if bank["robux"] < amount:
             await ctx.send(
@@ -267,9 +268,7 @@ async def gamble(ctx, amount: int = None):
 
         user["robux"] -= amount
 
-        # ALL LOST MONEY GOES
-        # INTO THE W38R BANK
-
+        # All lost Robux goes to w38r's bank.
         bank["robux"] += amount
 
         await ctx.send(
@@ -278,20 +277,6 @@ async def gamble(ctx, amount: int = None):
         )
 
     save_data()
-
-
-# =========================
-# BALANCE
-# =========================
-
-@bot.command(name="balance", aliases=["bal"])
-async def balance(ctx):
-
-    user = get_user(ctx.author.id)
-
-    await ctx.send(
-        f"Your balance is {user['robux']:,} Robux."
-    )
 
 
 # =========================
@@ -311,221 +296,13 @@ async def bank_command(ctx):
 
     if bank is None:
         await ctx.send(
-            "The w38r bank account has not been configured."
+            "The w38r bank has not been configured."
         )
         return
 
     await ctx.send(
         f"w38r Bank Balance: {bank['robux']:,} Robux"
     )
-
-
-# =========================
-# KEYS
-# =========================
-
-@bot.command(name="keys")
-async def keys(ctx):
-
-    if HR_KEY_STOCK <= 0:
-        stock_text = "OUT OF STOCK"
-    else:
-        stock_text = f"{HR_KEY_STOCK:,}"
-
-    await ctx.send(
-        f"HR Key\n"
-        f"Price: {HR_KEY_PRICE:,} Robux\n"
-        f"Stock: {stock_text}"
-    )
-
-
-# =========================
-# BUY KEY
-# =========================
-
-@bot.command(name="buykey")
-async def buykey(ctx, amount: int = None):
-
-    global HR_KEY_STOCK
-
-    if amount is None:
-        await ctx.send(
-            "Usage: .buykey <amount>"
-        )
-        return
-
-    if amount <= 0:
-        await ctx.send(
-            "The amount must be greater than 0."
-        )
-        return
-
-    user = get_user(ctx.author.id)
-
-    if HR_KEY_STOCK < amount:
-        await ctx.send(
-            f"There are not enough HR Keys in stock.\n"
-            f"Available: {HR_KEY_STOCK:,}"
-        )
-        return
-
-    total_price = HR_KEY_PRICE * amount
-
-    if user["robux"] < total_price:
-        await ctx.send(
-            f"You do not have enough Robux.\n"
-            f"Price: {total_price:,} Robux\n"
-            f"Your balance: {user['robux']:,} Robux"
-        )
-        return
-
-    user["robux"] -= total_price
-
-    HR_KEY_STOCK -= amount
-
-    user["hr_keys"] += amount
-
-    save_data()
-
-    await ctx.send(
-        f"You bought {amount:,} HR Key(s).\n"
-        f"Cost: {total_price:,} Robux\n"
-        f"Your balance: {user['robux']:,} Robux\n"
-        f"Remaining stock: {HR_KEY_STOCK:,}"
-    )
-
-
-# =========================
-# MY KEYS
-# =========================
-
-@bot.command(name="mykeys")
-async def mykeys(ctx):
-
-    user = get_user(ctx.author.id)
-
-    await ctx.send(
-        f"You own {user['hr_keys']:,} HR Key(s)."
-    )
-
-
-# =========================
-# RESTOCK
-# =========================
-
-@bot.command(name="restock")
-async def restock(ctx, amount: int = None):
-
-    if ctx.author.name != ADMIN_USERNAME:
-        await ctx.send(
-            "You do not have permission to use this command."
-        )
-        return
-
-    if amount is None:
-        await ctx.send(
-            "Usage: .restock <amount>"
-        )
-        return
-
-    if amount <= 0:
-        await ctx.send(
-            "The restock amount must be greater than 0."
-        )
-        return
-
-    global HR_KEY_STOCK
-
-    HR_KEY_STOCK += amount
-
-    save_data()
-
-    await ctx.send(
-        f"Restocked {amount:,} HR Key(s).\n"
-        f"Current stock: {HR_KEY_STOCK:,}"
-    )
-
-
-# =========================
-# SET KEY PRICE
-# =========================
-
-@bot.command(name="setkeyprice")
-async def setkeyprice(ctx, price: int = None):
-
-    if ctx.author.name != ADMIN_USERNAME:
-        await ctx.send(
-            "You do not have permission to use this command."
-        )
-        return
-
-    if price is None:
-        await ctx.send(
-            "Usage: .setkeyprice <price>"
-        )
-        return
-
-    if price <= 0:
-        await ctx.send(
-            "The key price must be greater than 0."
-        )
-        return
-
-    global HR_KEY_PRICE
-
-    HR_KEY_PRICE = price
-
-    save_data()
-
-    await ctx.send(
-        f"HR Key price changed to "
-        f"{HR_KEY_PRICE:,} Robux."
-    )
-
-
-# =========================
-# KEY EMBED
-# =========================
-
-@bot.command(name="keyembed")
-async def keyembed(ctx):
-
-    if ctx.author.name != ADMIN_USERNAME:
-        await ctx.send(
-            "You do not have permission to use this command."
-        )
-        return
-
-    if HR_KEY_STOCK <= 0:
-        stock_text = "OUT OF STOCK"
-    else:
-        stock_text = f"{HR_KEY_STOCK:,}"
-
-    embed = discord.Embed(
-        title="HR Key",
-        description="Purchase HR Keys using your Robux.",
-        color=discord.Color.blue()
-    )
-
-    embed.add_field(
-        name="Price",
-        value=f"{HR_KEY_PRICE:,} Robux",
-        inline=True
-    )
-
-    embed.add_field(
-        name="Stock",
-        value=stock_text,
-        inline=True
-    )
-
-    embed.add_field(
-        name="Purchase",
-        value=".buykey <amount>",
-        inline=False
-    )
-
-    await ctx.send(embed=embed)
 
 
 # =========================
@@ -591,13 +368,7 @@ async def help_command(ctx):
         ".robux - Earn fictional Robux\n"
         ".balance - Check your Robux\n"
         ".gamble <amount> - Gamble Robux\n"
-        ".keys - View HR Key price and stock\n"
-        ".buykey <amount> - Buy HR Keys\n"
-        ".mykeys - View your HR Keys\n"
-        ".bank - View the w38r bank balance\n"
-        ".restock <amount> - Admin command\n"
-        ".setkeyprice <price> - Admin command\n"
-        ".keyembed - Admin command\n"
+        ".bank - View the w38r bank\n"
         ".setpayout <minimum> <maximum> - Admin command"
     )
 
@@ -624,13 +395,11 @@ async def on_command_error(ctx, error):
         )
         return
 
-    print(
-        f"Command error: {error}"
-    )
+    print(f"Command error: {error}")
 
 
 # =========================
-# FLASK SERVER
+# FLASK KEEPALIVE
 # =========================
 
 app = Flask(__name__)
@@ -657,7 +426,7 @@ def run_server():
 
 
 # =========================
-# START BOT
+# START
 # =========================
 
 if not TOKEN:
