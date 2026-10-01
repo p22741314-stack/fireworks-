@@ -20,14 +20,11 @@ if not TOKEN:
         TOKEN = None
 
 PREFIX = "."
-
 DATA_FILE = "robux_users.json"
 
-# Default Robux payout
 MIN_PAYOUT = 100
 MAX_PAYOUT = 5000
 
-# Only this username can use admin commands
 ADMIN_USERNAME = "w38r"
 
 
@@ -95,7 +92,6 @@ def get_user(user_id):
 
 
 def find_shop_item(item_name):
-    """Find an item without caring about capitalization."""
     for name in shop:
         if name.lower() == item_name.lower():
             return name
@@ -180,7 +176,6 @@ async def gamble(ctx, amount: int = None):
     ])
 
     if won:
-
         user["robux"] += amount
 
         await ctx.send(
@@ -189,7 +184,6 @@ async def gamble(ctx, amount: int = None):
         )
 
     else:
-
         user["robux"] -= amount
 
         await ctx.send(
@@ -217,6 +211,8 @@ async def shop_command(ctx):
 
     for item_name, item_data in shop.items():
 
+        buy_price = item_data["buy_price"]
+        sell_price = item_data["sell_price"]
         stock = item_data["stock"]
 
         if stock <= 0:
@@ -226,6 +222,8 @@ async def shop_command(ctx):
 
         message += (
             f"{item_name}\n"
+            f"Buy: {buy_price:,} Robux\n"
+            f"Sell: {sell_price:,} Robux\n"
             f"Stock: {stock_text}\n\n"
         )
 
@@ -246,7 +244,6 @@ async def additem(
     item_name: str = None
 ):
 
-    # Only w38r
     if ctx.author.name != ADMIN_USERNAME:
         await ctx.send(
             "You do not have permission to use this command."
@@ -302,7 +299,6 @@ async def additem(
         )
         return
 
-    # Check duplicate item
     if find_shop_item(item_name) is not None:
         await ctx.send(
             "That item already exists in the shop."
@@ -320,6 +316,8 @@ async def additem(
     await ctx.send(
         f"Item added.\n"
         f"Item: {item_name}\n"
+        f"Buy price: {buy_price:,} Robux\n"
+        f"Sell price: {sell_price:,} Robux\n"
         f"Stock: {stock}"
     )
 
@@ -331,7 +329,6 @@ async def additem(
 @bot.command(name="deleteitem")
 async def deleteitem(ctx, *, item_name: str = None):
 
-    # Only w38r
     if ctx.author.name != ADMIN_USERNAME:
         await ctx.send(
             "You do not have permission to use this command."
@@ -403,13 +400,10 @@ async def buy(ctx, *, item_name: str = None):
         )
         return
 
-    # Take Robux
     user["robux"] -= price
 
-    # Take one from stock
     item["stock"] -= 1
 
-    # Add item to inventory
     if actual_item not in user["inventory"]:
         user["inventory"][actual_item] = 0
 
@@ -468,13 +462,11 @@ async def sell(ctx, *, item_name: str = None):
 
     sell_price = item["sell_price"]
 
-    # Remove one item
     user["inventory"][actual_item] -= 1
 
     if user["inventory"][actual_item] <= 0:
         del user["inventory"][actual_item]
 
-    # Give Robux
     user["robux"] += sell_price
 
     save_data()
@@ -505,10 +497,7 @@ async def inventory(ctx):
     message = "Your inventory:\n\n"
 
     for item_name, amount in inventory.items():
-
-        message += (
-            f"{item_name}: {amount}\n"
-        )
+        message += f"{item_name}: {amount}\n"
 
     await ctx.send(message)
 
@@ -572,7 +561,7 @@ async def help_command(ctx):
         "Robux Simulator Commands:\n\n"
         ".robux - Earn random Robux\n"
         ".gamble <amount> - Gamble your Robux\n"
-        ".shop - View the shop\n"
+        ".shop - View shop items, prices, and stock\n"
         ".buy <item> - Buy an item\n"
         ".sell <item> - Sell an item\n"
         ".inventory - View your inventory\n"
@@ -589,24 +578,16 @@ async def help_command(ctx):
 @bot.event
 async def on_command_error(ctx, error):
 
-    if isinstance(
-        error,
-        commands.CommandNotFound
-    ):
+    if isinstance(error, commands.CommandNotFound):
         return
 
-    if isinstance(
-        error,
-        commands.BadArgument
-    ):
+    if isinstance(error, commands.BadArgument):
         await ctx.send(
             "Invalid command arguments."
         )
         return
 
-    print(
-        f"Command error: {error}"
-    )
+    print(f"Command error: {error}")
 
 
 # =========================
@@ -641,13 +622,8 @@ def run_server():
 # =========================
 
 if not TOKEN:
-
-    print(
-        "ERROR: DISCORD_TOKEN is not set."
-    )
-
+    print("ERROR: DISCORD_TOKEN is not set.")
 else:
-
     Thread(
         target=run_server,
         daemon=True
