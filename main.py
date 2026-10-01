@@ -20,16 +20,15 @@ if not TOKEN:
         TOKEN = None
 
 PREFIX = "."
+
 DATA_FILE = "robux_users.json"
 
-# Default payout
+# Default .robux payout
 MIN_PAYOUT = 100
 MAX_PAYOUT = 5000
 
-# Put your Discord user ID here
-ADMIN_IDS = {
-    123456789012345678
-}
+# Only this Discord username can use .setpayout
+ADMIN_USERNAME = "w38r"
 
 
 # =========================
@@ -43,7 +42,7 @@ def load_data():
     try:
         with open(DATA_FILE, "r") as f:
             return json.load(f)
-    except:
+    except (json.JSONDecodeError, OSError):
         return {}
 
 
@@ -88,7 +87,7 @@ async def on_ready():
 
 
 # =========================
-# ROBUX COMMAND
+# .ROBUX
 # =========================
 
 @bot.command(name="robux")
@@ -108,7 +107,7 @@ async def robux(ctx):
 
 
 # =========================
-# GAMBLE COMMAND
+# .GAMBLE
 # =========================
 
 @bot.command(name="gamble")
@@ -153,13 +152,14 @@ async def gamble(ctx, amount: int = None):
 
 
 # =========================
-# ADMIN: CHANGE PAYOUT
+# ADMIN .SETPAYOUT
 # =========================
 
 @bot.command(name="setpayout")
 async def setpayout(ctx, minimum: int = None, maximum: int = None):
 
-    if ctx.author.id not in ADMIN_IDS:
+    # Only username "w38r" can use this command
+    if ctx.author.name != ADMIN_USERNAME:
         await ctx.send("You do not have permission to use this command.")
         return
 
@@ -189,8 +189,8 @@ async def setpayout(ctx, minimum: int = None, maximum: int = None):
 
     await ctx.send(
         f"Robux payout changed.\n"
-        f"Minimum: {MIN_PAYOUT:,} Robux\n"
-        f"Maximum: {MAX_PAYOUT:,} Robux"
+        f"Minimum payout: {MIN_PAYOUT:,} Robux\n"
+        f"Maximum payout: {MAX_PAYOUT:,} Robux"
     )
 
 
@@ -201,19 +201,29 @@ async def setpayout(ctx, minimum: int = None, maximum: int = None):
 @bot.command(name="help")
 async def help_command(ctx):
 
-    if ctx.author.id in ADMIN_IDS:
-        await ctx.send(
-            "Robux Simulator Commands:\n\n"
-            ".robux - Earn random Robux\n"
-            ".gamble <amount> - Gamble your Robux\n"
-            ".setpayout <minimum> <maximum> - Change the Robux payout"
-        )
-    else:
-        await ctx.send(
-            "Robux Simulator Commands:\n\n"
-            ".robux - Earn random Robux\n"
-            ".gamble <amount> - Gamble your Robux"
-        )
+    await ctx.send(
+        "Robux Simulator Commands:\n\n"
+        ".robux - Earn random Robux\n"
+        ".gamble <amount> - Gamble your Robux\n"
+        ".setpayout <minimum> <maximum> - Admin command"
+    )
+
+
+# =========================
+# UNKNOWN COMMAND HANDLER
+# =========================
+
+@bot.event
+async def on_command_error(ctx, error):
+
+    if isinstance(error, commands.CommandNotFound):
+        return
+
+    if isinstance(error, commands.BadArgument):
+        await ctx.send("Invalid command arguments.")
+        return
+
+    print(f"Command error: {error}")
 
 
 # =========================
@@ -230,7 +240,10 @@ def home():
 
 def run_server():
     port = int(os.getenv("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(
+        host="0.0.0.0",
+        port=port
+    )
 
 
 # =========================
@@ -240,5 +253,9 @@ def run_server():
 if not TOKEN:
     print("ERROR: DISCORD_TOKEN is not set.")
 else:
-    Thread(target=run_server).start()
+    Thread(
+        target=run_server,
+        daemon=True
+    ).start()
+
     bot.run(TOKEN)
