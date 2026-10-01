@@ -29,16 +29,9 @@ MAX_PAYOUT = 5000
 
 ADMIN_USERNAME = "w38r"
 
-# Set this in Render:
-# W38R_USER_ID=YOUR_DISCORD_USER_ID
-try:
-    ADMIN_USER_ID = int(os.getenv("W38R_USER_ID", "0"))
-except ValueError:
-    ADMIN_USER_ID = 0
-
 
 # =========================
-# LOAD DATA
+# DATA
 # =========================
 
 def load_data():
@@ -105,7 +98,7 @@ def save_data():
 
 
 # =========================
-# USER DATA
+# GET USER
 # =========================
 
 def get_user(user_id):
@@ -115,6 +108,7 @@ def get_user(user_id):
         users[user_id] = {
             "robux": 0
         }
+
         save_data()
 
     if "robux" not in users[user_id]:
@@ -124,14 +118,21 @@ def get_user(user_id):
 
 
 # =========================
-# BANK
+# FIND W38R BANK
 # =========================
 
-def get_bank():
-    if ADMIN_USER_ID == 0:
-        return None
+def get_bank_user():
 
-    return get_user(ADMIN_USER_ID)
+    # Look through users currently known to the bot
+    for guild in bot.guilds:
+
+        for member in guild.members:
+
+            if member.name.lower() == ADMIN_USERNAME.lower():
+
+                return get_user(member.id)
+
+    return None
 
 
 # =========================
@@ -140,6 +141,7 @@ def get_bank():
 
 intents = discord.Intents.default()
 intents.message_content = True
+intents.members = True
 
 bot = commands.Bot(
     command_prefix=PREFIX,
@@ -149,18 +151,21 @@ bot = commands.Bot(
 
 
 # =========================
-# BOT READY
+# READY
 # =========================
 
 @bot.event
 async def on_ready():
+
     print(f"Logged in as {bot.user}")
     print("Robux Simulator is online.")
 
-    if ADMIN_USER_ID == 0:
-        print("WARNING: W38R_USER_ID is not configured.")
+    bank = get_bank_user()
+
+    if bank is None:
+        print("WARNING: Could not find the w38r account.")
     else:
-        print("w38r bank account is configured.")
+        print("w38r bank account found.")
 
 
 # =========================
@@ -220,16 +225,17 @@ async def gamble(ctx, amount: int = None):
         )
         return
 
-    user = get_user(ctx.author.id)
+    player = get_user(ctx.author.id)
 
-    if user["robux"] < amount:
+    if player["robux"] < amount:
         await ctx.send(
             f"You do not have enough Robux.\n"
-            f"Your balance is {user['robux']:,} Robux."
+            f"Your balance is {player['robux']:,} Robux."
         )
         return
 
-    bank = get_bank()
+    # Find w38r's account
+    bank = get_bank_user()
 
     if bank is None:
         await ctx.send(
@@ -245,19 +251,22 @@ async def gamble(ctx, amount: int = None):
 
     if won:
 
+        # Bank pays the player
         if bank["robux"] < amount:
+
             await ctx.send(
                 "The w38r bank does not have enough "
                 "Robux to pay this win."
             )
+
             return
 
-        user["robux"] += amount
+        player["robux"] += amount
         bank["robux"] -= amount
 
         await ctx.send(
             f"You won {amount:,} Robux.\n"
-            f"Your balance is {user['robux']:,} Robux."
+            f"Your balance is {player['robux']:,} Robux."
         )
 
     # =========================
@@ -266,14 +275,15 @@ async def gamble(ctx, amount: int = None):
 
     else:
 
-        user["robux"] -= amount
+        # Remove money from player
+        player["robux"] -= amount
 
-        # All lost Robux goes to w38r's bank.
+        # Put ALL lost money into w38r's bank
         bank["robux"] += amount
 
         await ctx.send(
             f"You lost {amount:,} Robux.\n"
-            f"Your balance is {user['robux']:,} Robux."
+            f"Your balance is {player['robux']:,} Robux."
         )
 
     save_data()
@@ -284,24 +294,25 @@ async def gamble(ctx, amount: int = None):
 # =========================
 
 @bot.command(name="bank")
-async def bank_command(ctx):
+async def bank(ctx):
 
-    if ctx.author.name != ADMIN_USERNAME:
+    if ctx.author.name.lower() != ADMIN_USERNAME.lower():
         await ctx.send(
             "You do not have permission to use this command."
         )
         return
 
-    bank = get_bank()
+    bank_user = get_bank_user()
 
-    if bank is None:
+    if bank_user is None:
         await ctx.send(
-            "The w38r bank has not been configured."
+            "I could not find the w38r account."
         )
         return
 
     await ctx.send(
-        f"w38r Bank Balance: {bank['robux']:,} Robux"
+        f"w38r Bank Balance: "
+        f"{bank_user['robux']:,} Robux"
     )
 
 
@@ -316,7 +327,7 @@ async def setpayout(
     maximum: int = None
 ):
 
-    if ctx.author.name != ADMIN_USERNAME:
+    if ctx.author.name.lower() != ADMIN_USERNAME.lower():
         await ctx.send(
             "You do not have permission to use this command."
         )
@@ -395,7 +406,9 @@ async def on_command_error(ctx, error):
         )
         return
 
-    print(f"Command error: {error}")
+    print(
+        f"Command error: {error}"
+    )
 
 
 # =========================
@@ -407,6 +420,7 @@ app = Flask(__name__)
 
 @app.route("/")
 def home():
+
     return "Robux Simulator Bot is online."
 
 
@@ -426,7 +440,7 @@ def run_server():
 
 
 # =========================
-# START
+# START BOT
 # =========================
 
 if not TOKEN:
