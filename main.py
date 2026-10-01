@@ -23,11 +23,11 @@ PREFIX = "."
 
 DATA_FILE = "robux_users.json"
 
-# Default .robux payout
+# Default Robux payout
 MIN_PAYOUT = 100
 MAX_PAYOUT = 5000
 
-# Only this Discord username can use .setpayout
+# Only this username can use admin commands
 ADMIN_USERNAME = "w38r"
 
 
@@ -37,21 +37,45 @@ ADMIN_USERNAME = "w38r"
 
 def load_data():
     if not os.path.exists(DATA_FILE):
-        return {}
+        return {
+            "users": {},
+            "shop": {}
+        }
 
     try:
         with open(DATA_FILE, "r") as f:
-            return json.load(f)
+            data = json.load(f)
+
+        # Make sure both sections exist
+        if "users" not in data:
+            data["users"] = {}
+
+        if "shop" not in data:
+            data["shop"] = {}
+
+        return data
+
     except (json.JSONDecodeError, OSError):
-        return {}
+        return {
+            "users": {},
+            "shop": {}
+        }
 
 
 def save_data():
+    data = {
+        "users": users,
+        "shop": shop
+    }
+
     with open(DATA_FILE, "w") as f:
-        json.dump(users, f, indent=4)
+        json.dump(data, f, indent=4)
 
 
-users = load_data()
+data = load_data()
+
+users = data["users"]
+shop = data["shop"]
 
 
 def get_user(user_id):
@@ -59,8 +83,14 @@ def get_user(user_id):
 
     if user_id not in users:
         users[user_id] = {
-            "robux": 0
+            "robux": 0,
+            "inventory": {}
         }
+        save_data()
+
+    # Add inventory if old account doesn't have one
+    if "inventory" not in users[user_id]:
+        users[user_id]["inventory"] = {}
         save_data()
 
     return users[user_id]
@@ -152,13 +182,234 @@ async def gamble(ctx, amount: int = None):
 
 
 # =========================
+# .SHOP
+# =========================
+
+@bot.command(name="shop")
+async def shop_command(ctx):
+
+    if not shop:
+        await ctx.send("The shop is currently empty.")
+        return
+
+    message = "Shop:\n\n"
+
+    for item_name, item_data in shop.items():
+
+        buy_price = item_data["buy_price"]
+        sell_price = item_data["sell_price"]
+
+        message += (
+            f"{item_name}\n"
+            f"Buy: {buy_price:,} Robux\n"
+            f"Sell: {sell_price:,} Robux\n\n"
+        )
+
+    await ctx.send(message)
+
+
+# =========================
+# .ADDITEM
+# =========================
+
+@bot.command(name="additem")
+async def additem(ctx, buy_price: int = None, sell_price: int = None, *, item_name: str = None):
+
+    # Only w38r
+    if ctx.author.name != ADMIN_USERNAME:
+        await ctx.send("You do not have permission to use this command.")
+        return
+
+    if item_name is None or buy_price is None or sell_price is None:
+        await ctx.send(
+            "Usage: .additem <buy price> <sell price> <item name>"
+        )
+        return
+
+    if buy_price <= 0:
+        await ctx.send("The buy price must be greater than 0.")
+        return
+
+    if sell_price <= 0:
+        await ctx.send("The sell price must be greater than 0.")
+        return
+
+    if sell_price <= buy_price:
+        await ctx.send(
+            "The sell price must be greater than the buy price."
+        )
+        return
+
+    item_name = item_name.strip()
+
+    if not item_name:
+        await ctx.send("You must provide an item name.")
+        return
+
+    if len(item_name) > 50:
+        await ctx.send("The item name cannot be longer than 50 characters.")
+        return
+
+    # Prevent duplicate item names
+    if item_name.lower() in [name.lower() for name in shop]:
+        await ctx.send("That item already exists in the shop.")
+        return
+
+    shop[item_name] = {
+        "buy_price": buy_price,
+        "sell_price": sell_price
+    }
+
+    save_data()
+
+    await ctx.send(
+        f"Item added to the shop.\n"
+        f"Item: {item_name}\n"
+        f"Buy price: {buy_price:,} Robux\n"
+        f"Sell price: {sell_price:,} Robux"
+    )
+
+
+# =========================
+# .BUY
+# =========================
+
+@bot.command(name="buy")
+async def buy(ctx, *, item_name: str = None):
+
+    if item_name is None:
+        await ctx.send("Usage: .buy <item>")
+        return
+
+    user = get_user(ctx.author.id)
+
+    # Find item without caring about capitalization
+    actual_item = None
+
+    for name in shop:
+        if name.lower() == item_name.lower():
+            actual_item = name
+            break
+
+    if actual_item is None:
+        await ctx.send("That item is not in the shop.")
+        return
+
+    item = shop[actual_item]
+    price = item["buy_price"]
+
+    if user["robux"] < price:
+        await ctx.send(
+            f"You do not have enough Robux.\n"
+            f"Price: {price:,} Robux\n"
+            f"Your balance: {user['robux']:,} Robux"
+        )
+        return
+
+    user["robux"] -= price
+
+    if actual_item not in user["inventory"]:
+        user["inventory"][actual_item] = 0
+
+    user["inventory"][actual_item] += 1
+
+    save_data()
+
+    await ctx.send(
+        f"You bought {actual_item} for {price:,} Robux.\n"
+        f"Your balance is {user['robux']:,} Robux."
+    )
+
+
+# =========================
+# .SELL
+# =========================
+
+@bot.command(name="sell")
+async def sell(ctx, *, item_name: str = None):
+
+    if item_name is None:
+        await ctx.send("Usage: .sell <item>")
+        return
+
+    user = get_user(ctx.author.id)
+
+    # Find item without caring about capitalization
+    actual_item = None
+
+    for name in shop:
+        if name.lower() == item_name.lower():
+            actual_item = name
+            break
+
+    if actual_item is None:
+        await ctx.send("That item does not exist.")
+        return
+
+    # Check inventory
+    if actual_item not in user["inventory"]:
+        await ctx.send(
+            f"You do not own {actual_item}."
+        )
+        return
+
+    if user["inventory"][actual_item] <= 0:
+        await ctx.send(
+            f"You do not own {actual_item}."
+        )
+        return
+
+    item = shop[actual_item]
+    sell_price = item["sell_price"]
+
+    # Remove one item
+    user["inventory"][actual_item] -= 1
+
+    # Remove empty inventory entry
+    if user["inventory"][actual_item] <= 0:
+        del user["inventory"][actual_item]
+
+    # Give Robux
+    user["robux"] += sell_price
+
+    save_data()
+
+    await ctx.send(
+        f"You sold {actual_item} for {sell_price:,} Robux.\n"
+        f"Your balance is {user['robux']:,} Robux."
+    )
+
+
+# =========================
+# .INVENTORY
+# =========================
+
+@bot.command(name="inventory")
+async def inventory(ctx):
+
+    user = get_user(ctx.author.id)
+
+    inventory = user["inventory"]
+
+    if not inventory:
+        await ctx.send("Your inventory is empty.")
+        return
+
+    message = "Your inventory:\n\n"
+
+    for item_name, amount in inventory.items():
+        message += f"{item_name}: {amount}\n"
+
+    await ctx.send(message)
+
+
+# =========================
 # ADMIN .SETPAYOUT
 # =========================
 
 @bot.command(name="setpayout")
 async def setpayout(ctx, minimum: int = None, maximum: int = None):
 
-    # Only username "w38r" can use this command
     if ctx.author.name != ADMIN_USERNAME:
         await ctx.send("You do not have permission to use this command.")
         return
@@ -205,6 +456,11 @@ async def help_command(ctx):
         "Robux Simulator Commands:\n\n"
         ".robux - Earn random Robux\n"
         ".gamble <amount> - Gamble your Robux\n"
+        ".shop - View the shop\n"
+        ".buy <item> - Buy an item\n"
+        ".sell <item> - Sell an item\n"
+        ".inventory - View your items\n"
+        ".additem <buy price> <sell price> <item name> - Admin command\n"
         ".setpayout <minimum> <maximum> - Admin command"
     )
 
@@ -240,6 +496,7 @@ def home():
 
 def run_server():
     port = int(os.getenv("PORT", 10000))
+
     app.run(
         host="0.0.0.0",
         port=port
