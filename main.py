@@ -2,111 +2,107 @@ import json
 import os
 import random
 import threading
-import asyncio
 import time
 
 import discord
 from discord.ext import commands
-from discord.ui import Button, View
 from flask import Flask
 
 
-# ---------- Configuration ----------
+# ============================================================
+# CONFIGURATION
+# ============================================================
 
-DATA_FILE = "keys.json"
-BLACKLIST_FILE = "blacklist.json"
 PREFIX = "."
-MAX_TOTAL_CLAIMS = 1  # Regular users can only ever claim ONE key
+DATA_FILE = "robux_users.json"
 
+STARTING_ROBUX = 0
 
-# ---------- Render Web Server ----------
-
+# Flask / Render
 app = Flask(__name__)
+
 
 @app.route("/")
 def home():
-    return "Key Bot is online!"
+    return "Robux Simulator Bot is online!"
+
 
 def run_web():
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
 
-# Start the web server in the background
+
 threading.Thread(target=run_web, daemon=True).start()
 
 
-# ---------- Storage Helpers ----------
+# ============================================================
+# DATA STORAGE
+# ============================================================
 
-def load_keys():
+def load_data():
     if not os.path.exists(DATA_FILE):
-        return []
+        return {}
 
     try:
         with open(DATA_FILE, "r", encoding="utf-8") as f:
             return json.load(f)
     except (json.JSONDecodeError, OSError):
-        return []
+        return {}
 
-def save_keys(keys):
+
+def save_data(data):
     with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(keys, f, indent=2)
+        json.dump(data, f, indent=2)
 
 
-# ---------- User Tracking ----------
+def create_user(user_id):
+    data = load_data()
+    uid = str(user_id)
 
-USER_DATA_FILE = "user_data.json"
-
-def load_user_data():
-    if not os.path.exists(USER_DATA_FILE):
-        return {}
-
-    try:
-        with open(USER_DATA_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except (json.JSONDecodeError, OSError):
-        return {}
-
-def save_user_data(user_data):
-    with open(USER_DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(user_data, f, indent=2)
-
-def get_user_info(user_id):
-    """Get user's claim count and last claim time."""
-    user_data = load_user_data()
-    user_id_str = str(user_id)
-    
-    if user_id_str not in user_data:
-        user_data[user_id_str] = {
-            "claims": 0,
-            "last_claim": 0
+    if uid not in data:
+        data[uid] = {
+            "robux": STARTING_ROBUX,
+            "started": True,
+            "games": [],
+            "limiteds": [],
+            "total_earned": 0,
+            "total_donated": 0,
+            "total_donated_received": 0,
+            "created_at": time.time()
         }
-        save_user_data(user_data)
-    
-    return user_data[user_id_str]
+        save_data(data)
 
-def update_user_claims(user_id):
-    """Update user's claim count and last claim time."""
-    user_data = load_user_data()
-    user_id_str = str(user_id)
-    
-    if user_id_str not in user_data:
-        user_data[user_id_str] = {
-            "claims": 0,
-            "last_claim": 0
-        }
-    
-    user_data[user_id_str]["claims"] += 1
-    user_data[user_id_str]["last_claim"] = time.time()
-    save_user_data(user_data)
-    
-    return user_data[user_id_str]
-
-def get_all_user_data():
-    """Get all user data."""
-    return load_user_data()
+    return data[uid]
 
 
-# ---------- Bot Setup ----------
+def get_user(user_id):
+    data = load_data()
+    uid = str(user_id)
+
+    if uid not in data:
+        return None
+
+    return data[uid]
+
+
+def update_user(user_id, user_info):
+    data = load_data()
+    data[str(user_id)] = user_info
+    save_data(data)
+
+
+def ensure_started(ctx):
+    user = get_user(ctx.author.id)
+
+    if user is None:
+        return None
+
+    return user
+
+
+# ============================================================
+# BOT SETUP
+# ============================================================
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -118,449 +114,923 @@ bot = commands.Bot(
 )
 
 
-# ---------- Events ----------
+# ============================================================
+# READY
+# ============================================================
 
 @bot.event
 async def on_ready():
-    print(f"Logged in as {bot.user} (id: {bot.user.id})")
-    print("Key Bot is online!")
+    print(f"Logged in as {bot.user}")
+    print("Robux Simulator Bot is online!")
 
 
-# ---------- Command Message Deletion Helper ----------
+# ============================================================
+# START
+# ============================================================
 
-async def delete_command_message(ctx):
-    """Delete the user's command message only."""
-    try:
-        await ctx.message.delete()
-    except discord.Forbidden:
-        pass
-    except discord.HTTPException:
-        pass
+@bot.command(name="start")
+async def start(ctx):
 
+    existing = get_user(ctx.author.id)
 
-# ---------- Embed Builders ----------
+    if existing:
+        embed = discord.Embed(
+            title="🎮 Robux Simulator",
+            description="You already have a simulator!",
+            color=discord.Color.blue()
+        )
 
-def build_panel_embed(stock_count):
-    """Build the main key distribution panel embed with live stock."""
+        embed.add_field(
+            name="💰 Balance",
+            value=f"{existing['robux']:,} R$",
+            inline=True
+        )
+
+        embed.add_field(
+            name="🎮 Games",
+            value=str(len(existing["games"])),
+            inline=True
+        )
+
+        await ctx.send(embed=embed)
+        return
+
+    user = create_user(ctx.author.id)
+
     embed = discord.Embed(
-        title="Key Distribution System",
+        title="🎮 ROBUX SIMULATOR",
         description=(
-            "Welcome to the Key Vault. Click the button below to claim "
-            "your key.\n\u200b"
-        ),
-        color=discord.Color.blurple()
-    )
-    embed.add_field(
-        name="Stock Available",
-        value=f"**{stock_count}** keys in vault",
-        inline=True
-    )
-    embed.add_field(
-        name="Claim Limit",
-        value=f"**{MAX_TOTAL_CLAIMS}** key per user",
-        inline=True
-    )
-    embed.add_field(
-        name="Delivery",
-        value="Instant and private",
-        inline=True
-    )
-    embed.add_field(
-        name="How It Works",
-        value=(
-            "1. Press **Get Key** below\n"
-            "2. Receive a random key privately\n"
-            "3. Redeem it wherever you need\n\u200b"
-        ),
-        inline=False
-    )
-    embed.add_field(
-        name="Important",
-        value=(
-            "• Each key can only be claimed **once**\n"
-            "• Keys are distributed **randomly**\n"
-            "• Only **you** can see your key"
-        ),
-        inline=False
-    )
-    embed.set_footer(text="Key Vault System • Good luck!")
-    return embed
-
-
-def build_key_embed(picked_key, stock_remaining, claim_number, max_claims, is_admin):
-    """Build the private key delivery embed."""
-    embed = discord.Embed(
-        title="Key Claimed Successfully!",
-        description=(
-            "Here is your key — copy it with the button below:\n\n"
-            f"`{picked_key}`\n\u200b"
+            "Your simulator has started!\n\n"
+            "You begin with **0 R$**.\n"
+            "Build games, trade Limiteds, donate, and grow your fortune."
         ),
         color=discord.Color.green()
     )
+
     embed.add_field(
-        name="Stock Remaining",
-        value=f"**{stock_remaining}** keys left",
+        name="💰 Starting Balance",
+        value="0 R$",
         inline=True
     )
+
     embed.add_field(
-        name="Your Claims",
-        value=(
-            f"**{claim_number}/{max_claims}** used"
-            if not is_admin
-            else "**Unlimited** (Admin)"
-        ),
+        name="🎮 Games",
+        value="0",
         inline=True
     )
+
     embed.add_field(
-        name="Privacy",
-        value="Only you can see this",
+        name="🎩 Limiteds",
+        value="0",
         inline=True
     )
-    embed.add_field(
-        name="Tip",
-        value=(
-            "Click the key text above to copy it, or tap and hold "
-            "on mobile to copy."
-        ),
-        inline=False
-    )
-    embed.set_footer(text="Key Vault System • Redeem your key now!")
-    return embed
 
+    embed.set_footer(text="Robux Simulator")
 
-# ---------- Key Button View ----------
-
-class KeyButtonView(View):
-    def __init__(self):
-        super().__init__(timeout=None)
-    
-    @discord.ui.button(label="Get Key", style=discord.ButtonStyle.primary, custom_id="get_key")
-    async def get_key_button(self, interaction: discord.Interaction, button: Button):
-        """Handle the Get Key button press."""
-        
-        user_id = interaction.user.id
-        is_admin = interaction.user.guild_permissions.administrator
-        
-        # Load keys
-        keys = load_keys()
-        
-        if not keys:
-            await interaction.response.send_message(
-                "The vault is empty. Please wait for a restock.",
-                ephemeral=True
-            )
-            return
-        
-        # Check claim limit (admins bypass)
-        if not is_admin:
-            user_info = get_user_info(user_id)
-            if user_info["claims"] >= MAX_TOTAL_CLAIMS:
-                await interaction.response.send_message(
-                    "You have already claimed your key.\n"
-                    "Each user can only claim **one** key.",
-                    ephemeral=True
-                )
-                return
-        
-        # Pick a random key
-        index = random.randrange(len(keys))
-        picked_key = keys.pop(index)
-        save_keys(keys)
-        
-        # Track claim (skip for admins)
-        if not is_admin:
-            update_user_claims(user_id)
-            user_info = get_user_info(user_id)
-            claim_number = user_info["claims"]
-        else:
-            claim_number = "∞"
-        
-        # Build the private key embed
-        key_embed = build_key_embed(
-            picked_key=picked_key,
-            stock_remaining=len(keys),
-            claim_number=claim_number,
-            max_claims=MAX_TOTAL_CLAIMS,
-            is_admin=is_admin
-        )
-        
-        await interaction.response.send_message(embed=key_embed, ephemeral=True)
-        
-        # ---- Auto-update the panel embed's stock count ----
-        try:
-            if interaction.message and interaction.message.author.id == bot.user.id:
-                updated_panel = build_panel_embed(len(keys))
-                await interaction.message.edit(embed=updated_panel, view=self)
-        except discord.HTTPException:
-            pass  # Ignore edit failures (e.g., message deleted)
-
-
-# ---------- SENDKEY COMMAND ----------
-
-@bot.command(name="sendkey")
-async def sendkey(ctx):
-    """
-    Send an embed with a Get Key button.
-    Admin only.
-    """
-    
-    if not ctx.author.guild_permissions.administrator:
-        await ctx.send("You need Administrator permission to use this command.")
-        await delete_command_message(ctx)
-        return
-    
-    await delete_command_message(ctx)
-    
-    keys = load_keys()
-    if not keys:
-        await ctx.send("Cannot send key embed: The vault is empty. Use `.restock` first.")
-        return
-    
-    embed = build_panel_embed(len(keys))
-    view = KeyButtonView()
-    await ctx.send(embed=embed, view=view)
-
-
-# ---------- GENS COMMAND ----------
-
-@bot.command(name="gens")
-async def gens(ctx):
-    """
-    Check whether you have already claimed your key.
-    """
-    
-    await delete_command_message(ctx)
-    
-    user_id = ctx.author.id
-    is_admin = ctx.author.guild_permissions.administrator
-    
-    if is_admin:
-        await ctx.send("You're an admin — unlimited claims.", ephemeral=True)
-        return
-    
-    user_info = get_user_info(user_id)
-    claims = user_info["claims"]
-    
-    if claims >= MAX_TOTAL_CLAIMS:
-        await ctx.send(
-            "You've already claimed your key.\n"
-            f"Claims used: **{claims}/{MAX_TOTAL_CLAIMS}**",
-            ephemeral=True
-        )
-    else:
-        await ctx.send(
-            "You have **1** claim available.\n"
-            "Click the **Get Key** button to claim it!",
-            ephemeral=True
-        )
-
-
-# ---------- LOGS COMMAND ----------
-
-@bot.command(name="logs")
-async def logs(ctx):
-    """
-    View all user claim activity.
-    Admin only.
-    """
-    
-    if not ctx.author.guild_permissions.administrator:
-        await ctx.send("You need Administrator permission to use this command.")
-        await delete_command_message(ctx)
-        return
-    
-    await delete_command_message(ctx)
-    
-    user_data = get_all_user_data()
-    
-    if not user_data:
-        await ctx.send("No user data yet.")
-        return
-    
-    claimed_users = []
-    guild = ctx.guild
-    
-    for user_id_str, data in user_data.items():
-        user_id = int(user_id_str)
-        claims = data["claims"]
-        
-        try:
-            member = await guild.fetch_member(user_id)
-            username = member.display_name if member else f"Unknown ({user_id})"
-        except:
-            username = f"Unknown ({user_id})"
-        
-        if claims > 0:
-            claimed_users.append((username, claims))
-    
-    claimed_users.sort(key=lambda x: x[1], reverse=True)
-    
-    total_claims = sum(d["claims"] for d in user_data.values())
-    
-    embed = discord.Embed(
-        title="Key Logs",
-        description="Overview of all claim activity.\n\u200b",
-        color=discord.Color.blurple()
-    )
-    embed.add_field(name="Stock", value=f"**{len(load_keys())}** keys", inline=True)
-    embed.add_field(name="Total Claims", value=f"**{total_claims}**", inline=True)
-    embed.add_field(name="Users", value=f"**{len(user_data)}**", inline=True)
-    
-    if claimed_users:
-        lines = [f"**{name}** — {count}" for name, count in claimed_users[:15]]
-        if len(claimed_users) > 15:
-            lines.append(f"*...and {len(claimed_users) - 15} more*")
-        embed.add_field(name="Claimed By", value="\n".join(lines), inline=False)
-    
-    embed.set_footer(text="Key Vault System")
     await ctx.send(embed=embed)
 
 
-# ---------- RESTOCK COMMAND ----------
+# ============================================================
+# BALANCE
+# ============================================================
 
-@bot.command(name="restock")
-async def restock(ctx):
-    """
-    Add keys to the vault via .txt file.
-    Admin only.
-    """
-    
+@bot.command(name="balance", aliases=["bal", "money"])
+async def balance(ctx):
+
+    user = ensure_started(ctx)
+
+    if user is None:
+        await ctx.send("You haven't started yet. Use `.start`.")
+        return
+
+    embed = discord.Embed(
+        title=f"💰 {ctx.author.display_name}'s Balance",
+        color=discord.Color.gold()
+    )
+
+    embed.add_field(
+        name="Robux",
+        value=f"**{user['robux']:,} R$**",
+        inline=False
+    )
+
+    await ctx.send(embed=embed)
+
+
+# ============================================================
+# CREATE GAME
+# ============================================================
+
+@bot.command(name="game")
+async def game(ctx, *, game_type=None):
+
+    user = ensure_started(ctx)
+
+    if user is None:
+        await ctx.send("Use `.start` first.")
+        return
+
+    if not game_type:
+        await ctx.send(
+            "Choose a game type:\n"
+            "🏃 Obby\n"
+            "💰 Tycoon\n"
+            "⚡ Simulator\n"
+            "🧟 Survival\n\n"
+            "Example: `.game survival`"
+        )
+        return
+
+    game_type = game_type.lower()
+
+    valid_games = {
+        "obby": "🏃 Obby",
+        "tycoon": "💰 Tycoon",
+        "simulator": "⚡ Simulator",
+        "survival": "🧟 Survival"
+    }
+
+    if game_type not in valid_games:
+        await ctx.send(
+            "Invalid game type. Choose:\n"
+            "`obby`, `tycoon`, `simulator`, or `survival`."
+        )
+        return
+
+    game_names = {
+        "obby": "Mega Rainbow Obby",
+        "tycoon": "Ultimate Tycoon",
+        "simulator": "Speed Rush Simulator",
+        "survival": "100 Days: Survival"
+    }
+
+    name = game_names[game_type]
+
+    new_game = {
+        "name": name,
+        "type": game_type,
+        "visits": 0,
+        "likes": 0,
+        "players": 0,
+        "earnings": 0,
+        "published": True,
+        "created_at": time.time()
+    }
+
+    user["games"].append(new_game)
+    update_user(ctx.author.id, user)
+
+    embed = discord.Embed(
+        title="🎮 GAME PUBLISHED!",
+        description=f"**{name}** is now live!",
+        color=discord.Color.green()
+    )
+
+    embed.add_field(
+        name="Type",
+        value=valid_games[game_type],
+        inline=True
+    )
+
+    embed.add_field(
+        name="👀 Visits",
+        value="0",
+        inline=True
+    )
+
+    embed.add_field(
+        name="❤️ Likes",
+        value="0",
+        inline=True
+    )
+
+    await ctx.send(embed=embed)
+
+
+# ============================================================
+# VIEW GAMES
+# ============================================================
+
+@bot.command(name="games")
+async def games(ctx):
+
+    user = ensure_started(ctx)
+
+    if user is None:
+        await ctx.send("Use `.start` first.")
+        return
+
+    if not user["games"]:
+        await ctx.send("You don't own any games yet. Use `.game survival`!")
+        return
+
+    embed = discord.Embed(
+        title="🎮 Your Games",
+        color=discord.Color.blue()
+    )
+
+    for game in user["games"]:
+        embed.add_field(
+            name=f"🎮 {game['name']}",
+            value=(
+                f"👀 Visits: **{game['visits']:,}**\n"
+                f"❤️ Likes: **{game['likes']:,}**\n"
+                f"👥 Players: **{game['players']:,}**\n"
+                f"💰 Earnings: **{game['earnings']:,} R$**"
+            ),
+            inline=False
+        )
+
+    await ctx.send(embed=embed)
+
+
+# ============================================================
+# EARN FROM GAMES
+# ============================================================
+
+@bot.command(name="earn")
+async def earn(ctx):
+
+    user = ensure_started(ctx)
+
+    if user is None:
+        await ctx.send("Use `.start` first.")
+        return
+
+    if not user["games"]:
+        await ctx.send("You don't have any games.")
+        return
+
+    total = 0
+
+    for game in user["games"]:
+
+        # Simulated earnings
+        earnings = random.randint(100, 5000)
+
+        visits = random.randint(100, 2500)
+        likes = random.randint(10, max(20, visits // 3))
+        players = random.randint(10, 1000)
+
+        game["earnings"] += earnings
+        game["visits"] += visits
+        game["likes"] += likes
+        game["players"] = players
+
+        total += earnings
+
+    user["robux"] += total
+    user["total_earned"] += total
+
+    update_user(ctx.author.id, user)
+
+    embed = discord.Embed(
+        title="📈 Game Earnings",
+        description=f"You earned **{total:,} R$** from your games!",
+        color=discord.Color.green()
+    )
+
+    embed.add_field(
+        name="💰 New Balance",
+        value=f"{user['robux']:,} R$",
+        inline=False
+    )
+
+    await ctx.send(embed=embed)
+
+
+# ============================================================
+# DONATE
+# ============================================================
+
+@bot.command(name="donate")
+async def donate(ctx, member: discord.Member = None, amount: int = None):
+
+    if member is None or amount is None:
+        await ctx.send(
+            "Usage: `.donate @player amount`\n"
+            "Example: `.donate @Steve 5000`"
+        )
+        return
+
+    if amount <= 0:
+        await ctx.send("Donation must be greater than 0.")
+        return
+
+    if member.id == ctx.author.id:
+        await ctx.send("You can't donate to yourself.")
+        return
+
+    sender = ensure_started(ctx)
+
+    if sender is None:
+        await ctx.send("Use `.start` first.")
+        return
+
+    receiver = get_user(member.id)
+
+    if receiver is None:
+        receiver = create_user(member.id)
+
+    if sender["robux"] < amount:
+        await ctx.send(
+            f"You only have **{sender['robux']:,} R$**."
+        )
+        return
+
+    sender["robux"] -= amount
+    receiver["robux"] += amount
+
+    sender["total_donated"] += amount
+    receiver["total_donated_received"] += amount
+
+    update_user(ctx.author.id, sender)
+    update_user(member.id, receiver)
+
+    embed = discord.Embed(
+        title="🎁 Donation Sent!",
+        description=(
+            f"{ctx.author.mention} donated "
+            f"**{amount:,} R$** to {member.mention}!"
+        ),
+        color=discord.Color.purple()
+    )
+
+    embed.add_field(
+        name="Your Balance",
+        value=f"{sender['robux']:,} R$",
+        inline=True
+    )
+
+    embed.add_field(
+        name="Recipient Balance",
+        value=f"{receiver['robux']:,} R$",
+        inline=True
+    )
+
+    await ctx.send(embed=embed)
+
+
+# ============================================================
+# LIMITED
+# ============================================================
+
+@bot.command(name="limited")
+async def limited(ctx):
+
+    user = ensure_started(ctx)
+
+    if user is None:
+        await ctx.send("Use `.start` first.")
+        return
+
+    if not user["limiteds"]:
+        await ctx.send("🎩 You don't own any Limiteds.")
+        return
+
+    embed = discord.Embed(
+        title="🎩 Your Limiteds",
+        color=discord.Color.gold()
+    )
+
+    for i, limited in enumerate(user["limiteds"], 1):
+
+        embed.add_field(
+            name=f"#{i} — {limited['name']}",
+            value=(
+                f"Purchase price: **{limited['purchase_price']:,} R$**\n"
+                f"Current value: **{limited['value']:,} R$**"
+            ),
+            inline=False
+        )
+
+    await ctx.send(embed=embed)
+
+
+# ============================================================
+# BUY LIMITED
+# ============================================================
+
+@bot.command(name="buylimited")
+async def buylimited(ctx, price: int = None):
+
+    user = ensure_started(ctx)
+
+    if user is None:
+        await ctx.send("Use `.start` first.")
+        return
+
+    if price is None:
+        await ctx.send("Usage: `.buylimited 5000`")
+        return
+
+    if price <= 0:
+        await ctx.send("Price must be greater than 0.")
+        return
+
+    if user["robux"] < price:
+        await ctx.send(
+            f"You need **{price:,} R$**, but only have "
+            f"**{user['robux']:,} R$**."
+        )
+        return
+
+    user["robux"] -= price
+
+    limited = {
+        "name": f"Limited #{random.randint(1000, 9999)}",
+        "purchase_price": price,
+        "value": price
+    }
+
+    user["limiteds"].append(limited)
+
+    update_user(ctx.author.id, user)
+
+    embed = discord.Embed(
+        title="🎩 Limited Purchased!",
+        color=discord.Color.gold()
+    )
+
+    embed.add_field(
+        name="Item",
+        value=limited["name"],
+        inline=False
+    )
+
+    embed.add_field(
+        name="Price",
+        value=f"{price:,} R$",
+        inline=True
+    )
+
+    embed.add_field(
+        name="Balance",
+        value=f"{user['robux']:,} R$",
+        inline=True
+    )
+
+    await ctx.send(embed=embed)
+
+
+# ============================================================
+# SELL LIMITED
+# ============================================================
+
+@bot.command(name="selllimited")
+async def selllimited(ctx, index: int = None, value: int = None):
+
+    user = ensure_started(ctx)
+
+    if user is None:
+        await ctx.send("Use `.start` first.")
+        return
+
+    if not user["limiteds"]:
+        await ctx.send("You don't own any Limiteds.")
+        return
+
+    if index is None or value is None:
+        await ctx.send(
+            "Usage: `.selllimited <number> <value>`\n"
+            "Example: `.selllimited 1 25000`"
+        )
+        return
+
+    if index < 1 or index > len(user["limiteds"]):
+        await ctx.send("Invalid Limited number.")
+        return
+
+    if value <= 0:
+        await ctx.send("Sale value must be greater than 0.")
+        return
+
+    limited = user["limiteds"].pop(index - 1)
+
+    purchase_price = limited["purchase_price"]
+
+    user["robux"] += value
+
+    update_user(ctx.author.id, user)
+
+    profit = value - purchase_price
+
+    embed = discord.Embed(
+        title="🎩 Limited Sold!",
+        color=discord.Color.green()
+    )
+
+    embed.add_field(
+        name="Sale Price",
+        value=f"{value:,} R$",
+        inline=True
+    )
+
+    embed.add_field(
+        name="Purchase Price",
+        value=f"{purchase_price:,} R$",
+        inline=True
+    )
+
+    embed.add_field(
+        name="Profit",
+        value=f"{profit:,} R$",
+        inline=True
+    )
+
+    embed.add_field(
+        name="New Balance",
+        value=f"{user['robux']:,} R$",
+        inline=False
+    )
+
+    await ctx.send(embed=embed)
+
+
+# ============================================================
+# DOUBLE OR NOTHING
+# ============================================================
+
+@bot.command(name="double")
+async def double(ctx, choice: str = None):
+
+    user = ensure_started(ctx)
+
+    if user is None:
+        await ctx.send("Use `.start` first.")
+        return
+
+    if user["robux"] <= 0:
+        await ctx.send("You have no R$ to put on the line.")
+        return
+
+    if choice is None:
+        await ctx.send(
+            "🎲 Choose heads or tails:\n"
+            "`.double heads`\n"
+            "`.double tails`"
+        )
+        return
+
+    choice = choice.lower()
+
+    if choice not in ["heads", "tails"]:
+        await ctx.send("Choose `heads` or `tails`.")
+        return
+
+    result = random.choice(["heads", "tails"])
+    amount = user["robux"]
+
+    if choice == result:
+
+        winnings = amount * 2
+        user["robux"] = winnings
+
+        update_user(ctx.author.id, user)
+
+        embed = discord.Embed(
+            title="🪙 YOU WIN!",
+            description=(
+                f"The coin landed on **{result.upper()}**!\n\n"
+                f"💰 **{winnings:,} R$**"
+            ),
+            color=discord.Color.green()
+        )
+
+    else:
+
+        user["robux"] = 0
+
+        update_user(ctx.author.id, user)
+
+        embed = discord.Embed(
+            title="🪙 YOU LOST!",
+            description=(
+                f"The coin landed on **{result.upper()}**.\n\n"
+                "💸 You lost everything."
+            ),
+            color=discord.Color.red()
+        )
+
+    await ctx.send(embed=embed)
+
+
+# ============================================================
+# SAVE
+# ============================================================
+
+@bot.command(name="save")
+async def save(ctx):
+
+    user = ensure_started(ctx)
+
+    if user is None:
+        await ctx.send("Use `.start` first.")
+        return
+
+    update_user(ctx.author.id, user)
+
+    await ctx.send(
+        f"💰 Your **{user['robux']:,} R$** has been saved!"
+    )
+
+
+# ============================================================
+# STATS
+# ============================================================
+
+@bot.command(name="stats")
+async def stats(ctx):
+
+    user = ensure_started(ctx)
+
+    if user is None:
+        await ctx.send("Use `.start` first.")
+        return
+
+    embed = discord.Embed(
+        title=f"📊 {ctx.author.display_name}'s Simulator",
+        color=discord.Color.blue()
+    )
+
+    embed.add_field(
+        name="💰 Robux",
+        value=f"{user['robux']:,} R$",
+        inline=True
+    )
+
+    embed.add_field(
+        name="🎮 Games",
+        value=str(len(user["games"])),
+        inline=True
+    )
+
+    embed.add_field(
+        name="🎩 Limiteds",
+        value=str(len(user["limiteds"])),
+        inline=True
+    )
+
+    embed.add_field(
+        name="📈 Total Earned",
+        value=f"{user['total_earned']:,} R$",
+        inline=True
+    )
+
+    embed.add_field(
+        name="🎁 Total Donated",
+        value=f"{user['total_donated']:,} R$",
+        inline=True
+    )
+
+    embed.add_field(
+        name="🎁 Donations Received",
+        value=f"{user['total_donated_received']:,} R$",
+        inline=True
+    )
+
+    await ctx.send(embed=embed)
+
+
+# ============================================================
+# LEADERBOARD
+# ============================================================
+
+@bot.command(name="leaderboard", aliases=["lb"])
+async def leaderboard(ctx):
+
+    data = load_data()
+
+    if not data:
+        await ctx.send("Nobody has started the simulator yet.")
+        return
+
+    sorted_users = sorted(
+        data.items(),
+        key=lambda x: x[1].get("robux", 0),
+        reverse=True
+    )
+
+    embed = discord.Embed(
+        title="🏆 Robux Simulator Leaderboard",
+        color=discord.Color.gold()
+    )
+
+    for position, (user_id, user) in enumerate(sorted_users[:10], 1):
+
+        try:
+            member = ctx.guild.get_member(int(user_id))
+
+            if member:
+                name = member.display_name
+            else:
+                name = f"User {user_id}"
+
+        except:
+            name = f"User {user_id}"
+
+        embed.add_field(
+            name=f"{position}. {name}",
+            value=f"💰 {user['robux']:,} R$",
+            inline=False
+        )
+
+    await ctx.send(embed=embed)
+
+
+# ============================================================
+# RESET YOUR ACCOUNT
+# ============================================================
+
+@bot.command(name="reset")
+async def reset(ctx):
+
+    data = load_data()
+    uid = str(ctx.author.id)
+
+    if uid not in data:
+        await ctx.send("You don't have a simulator account.")
+        return
+
+    del data[uid]
+    save_data(data)
+
+    await ctx.send(
+        "🔄 Your simulator has been reset.\n"
+        "Use `.start` to begin again with **0 R$**."
+    )
+
+
+# ============================================================
+# ADMIN: ADD ROBUX
+# ============================================================
+
+@bot.command(name="adminadd")
+async def adminadd(ctx, member: discord.Member = None, amount: int = None):
+
     if not ctx.author.guild_permissions.administrator:
-        await ctx.send("You need Administrator permission to use this command.")
-        await delete_command_message(ctx)
+        await ctx.send("❌ Administrator permission required.")
         return
-    
-    if not ctx.message.attachments:
-        await ctx.send("Attach a `.txt` file with one key per line.")
-        await delete_command_message(ctx)
+
+    if member is None or amount is None:
+        await ctx.send(
+            "Usage: `.adminadd @user amount`"
+        )
         return
-    
-    attachment = ctx.message.attachments[0]
-    
-    if not attachment.filename.lower().endswith(".txt"):
-        await ctx.send("Please attach a plain `.txt` file.")
-        await delete_command_message(ctx)
+
+    if amount <= 0:
+        await ctx.send("Amount must be greater than 0.")
         return
-    
-    raw_bytes = await attachment.read()
-    
-    try:
-        raw_text = raw_bytes.decode("utf-8")
-    except UnicodeDecodeError:
-        await ctx.send("Couldn't read that file. Make sure it is UTF-8 text.")
-        await delete_command_message(ctx)
-        return
-    
-    new_keys = [line.strip() for line in raw_text.splitlines() if line.strip()]
-    
-    if not new_keys:
-        await ctx.send("That file had no keys in it.")
-        await delete_command_message(ctx)
-        return
-    
-    keys = load_keys()
-    keys.extend(new_keys)
-    save_keys(keys)
-    
-    await delete_command_message(ctx)
-    await ctx.send(f"Added **{len(new_keys)}** keys. Total stock: **{len(keys)}**.")
+
+    user = get_user(member.id)
+
+    if user is None:
+        user = create_user(member.id)
+
+    user["robux"] += amount
+
+    update_user(member.id, user)
+
+    await ctx.send(
+        f"💰 Added **{amount:,} R$** to {member.mention}.\n"
+        f"New balance: **{user['robux']:,} R$**"
+    )
 
 
-# ---------- STOCK COMMAND ----------
+# ============================================================
+# ADMIN: RESET USER
+# ============================================================
 
-@bot.command(name="stock")
-async def stock(ctx):
-    """
-    Check how many keys are in the vault.
-    Admin only.
-    """
-    
+@bot.command(name="adminreset")
+async def adminreset(ctx, member: discord.Member = None):
+
     if not ctx.author.guild_permissions.administrator:
-        await ctx.send("You need Administrator permission to use this command.")
-        await delete_command_message(ctx)
+        await ctx.send("❌ Administrator permission required.")
         return
-    
-    keys = load_keys()
-    await delete_command_message(ctx)
-    await ctx.send(f"**{len(keys)}** keys in vault.")
 
-
-# ---------- CLEARSTOCK COMMAND ----------
-
-@bot.command(name="clearstock")
-async def clearstock(ctx):
-    """
-    Delete every key from the vault.
-    Admin only.
-    """
-    
-    if not ctx.author.guild_permissions.administrator:
-        await ctx.send("You need Administrator permission to use this command.")
-        await delete_command_message(ctx)
-        return
-    
-    save_keys([])
-    await delete_command_message(ctx)
-    await ctx.send("Stock cleared.")
-
-
-# ---------- RESETUSER COMMAND ----------
-
-@bot.command(name="resetuser")
-async def resetuser(ctx, member: discord.Member = None):
-    """
-    Reset a user's claim so they can claim again.
-    Admin only.
-    """
-    
-    if not ctx.author.guild_permissions.administrator:
-        await ctx.send("You need Administrator permission to use this command.")
-        await delete_command_message(ctx)
-        return
-    
     if member is None:
-        await ctx.send("Usage: `.resetuser @user`")
-        await delete_command_message(ctx)
+        await ctx.send("Usage: `.adminreset @user`")
         return
-    
-    user_data = load_user_data()
-    user_id_str = str(member.id)
-    
-    if user_id_str in user_data:
-        user_data[user_id_str]["claims"] = 0
-        user_data[user_id_str]["last_claim"] = 0
-        save_user_data(user_data)
-    
-    await delete_command_message(ctx)
-    await ctx.send(f"Reset claims for {member.mention}.")
+
+    data = load_data()
+    uid = str(member.id)
+
+    if uid in data:
+        del data[uid]
+        save_data(data)
+
+    await ctx.send(
+        f"🔄 Reset {member.mention}'s simulator account."
+    )
 
 
-# ---------- Error Handling ----------
+# ============================================================
+# HELP
+# ============================================================
+
+@bot.command(name="simhelp")
+async def simhelp(ctx):
+
+    embed = discord.Embed(
+        title="🎮 Robux Simulator Commands",
+        color=discord.Color.blue()
+    )
+
+    embed.add_field(
+        name="👤 Account",
+        value=(
+            "`.start`\n"
+            "`.balance`\n"
+            "`.stats`\n"
+            "`.save`\n"
+            "`.reset`"
+        ),
+        inline=True
+    )
+
+    embed.add_field(
+        name="🎮 Games",
+        value=(
+            "`.game survival`\n"
+            "`.games`\n"
+            "`.earn`"
+        ),
+        inline=True
+    )
+
+    embed.add_field(
+        name="🎩 Limiteds",
+        value=(
+            "`.limited`\n"
+            "`.buylimited 500`\n"
+            "`.selllimited 1 25000`"
+        ),
+        inline=True
+    )
+
+    embed.add_field(
+        name="🎁 Social",
+        value=(
+            "`.donate @user 5000`\n"
+            "`.leaderboard`"
+        ),
+        inline=True
+    )
+
+    embed.add_field(
+        name="🎲 Gambling",
+        value=(
+            "`.double heads`\n"
+            "`.double tails`"
+        ),
+        inline=True
+    )
+
+    await ctx.send(embed=embed)
+
+
+# ============================================================
+# ERROR HANDLING
+# ============================================================
 
 @bot.event
 async def on_command_error(ctx, error):
-    if isinstance(error, commands.CheckFailure):
-        pass
-    elif isinstance(error, commands.CommandNotFound):
-        pass
-    else:
-        await ctx.send(f"Error: {error}")
+
+    if isinstance(error, commands.CommandNotFound):
+        return
+
+    if isinstance(error, commands.MissingRequiredArgument):
+        await ctx.send(
+            f"❌ Missing argument: `{error.param.name}`"
+        )
+        return
+
+    if isinstance(error, commands.BadArgument):
+        await ctx.send(
+            "❌ I couldn't understand that argument."
+        )
+        return
+
+    print(f"Command error: {error}")
 
 
-# ---------- Run Bot ----------
+# ============================================================
+# RUN BOT
+# ============================================================
 
 if __name__ == "__main__":
-    
+
     token = os.environ.get("DISCORD_TOKEN")
-    
+
+    # Optional token.txt support
     if not token and os.path.exists("token.txt"):
         with open("token.txt", "r", encoding="utf-8") as f:
             token = f.read().strip()
-    
+
     if not token:
         raise SystemExit(
-            "No bot token found.\n"
-            "Set the DISCORD_TOKEN environment variable in Render."
+            "No bot token found. "
+            "Set DISCORD_TOKEN in your Render environment variables."
         )
-    
+
     bot.run(token)
